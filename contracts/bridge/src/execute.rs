@@ -1,3 +1,4 @@
+use astroport::common::{claim_ownership, drop_ownership_proposal, propose_new_owner};
 use cosmwasm_std::{
     coin, entry_point, BankMsg, CosmosMsg, IbcMsg, IbcTimeout, Reply, StdError, SubMsg, Uint128,
 };
@@ -9,9 +10,12 @@ use neutron_sdk::sudo::msg::RequestPacketTimeoutHeight;
 use osmosis_std::types::cosmos::bank::v1beta1::{DenomUnit, Metadata};
 
 use crate::msg::ExecuteMsg;
-use crate::state::{TokenMetadata, TOKEN_MAPPING, TOKEN_METADATA};
-use crate::types::CustomIbcMsg;
+use crate::state::{OWNERSHIP_PROPOSAL, SIGNERS, TOKEN_MAPPING, TOKEN_METADATA};
+use crate::types::{
+    Config, CustomIbcMsg, TokenMetadata, MAX_IBC_TIMEOUT_SECONDS, MIN_IBC_TIMEOUT_SECONDS,
+};
 use crate::{error::ContractError, state::CONFIG};
+
 use neutron_sdk::bindings::msg::{IbcFee, NeutronMsg};
 
 use osmosis_std::types::osmosis::tokenfactory::v1beta1::{
@@ -57,29 +61,73 @@ pub fn execute(
     msg: ExecuteMsg,
 ) -> Result<Response<NeutronMsg>, ContractError> {
     match msg {
-        ExecuteMsg::Activate {
+        ExecuteMsg::EnableToken {
             ticker,
             name,
+            image_url,
             decimals,
-        } => activate_token(deps, env, info, ticker, name, decimals),
-        ExecuteMsg::Receive {
-            ticker,
-            amount,
-            destination_addr,
-        } => bridge_receive(deps, env, info, ticker, amount, destination_addr),
-        ExecuteMsg::Send { destination_addr } => bridge_send(deps, env, info, destination_addr),
+        } => enable_token(deps, env, info, ticker, name, image_url, decimals),
+        // ExecuteMsg::Receive {
+        //     ticker,
+        //     amount,
+        //     destination_addr,
+        // } => bridge_receive(deps, env, info, ticker, amount, destination_addr),
+        // ExecuteMsg::Send { destination_addr } => bridge_send(deps, env, info, destination_addr),
+        ExecuteMsg::AddSigner { public_key, name } => add_signer(deps, env, info, public_key, name),
+        ExecuteMsg::RemoveSigner { public_key } => remove_signer(deps, env, info, public_key),
         ExecuteMsg::UpdateConfig {
+            bridge_ibc_channel,
             ibc_timeout_seconds,
-        } => update_config(deps, env, info, ibc_timeout_seconds),
+        } => update_config(deps, env, info, bridge_ibc_channel, ibc_timeout_seconds),
+        ExecuteMsg::ProposeNewOwner { owner, expires_in } => {
+            let config = CONFIG.load(deps.storage)?;
+            propose_new_owner(
+                deps,
+                info,
+                env,
+                owner,
+                expires_in,
+                config.owner,
+                OWNERSHIP_PROPOSAL,
+            )
+            .map_err(Into::into)
+        }
+        ExecuteMsg::DropOwnershipProposal {} => {
+            let config: Config = CONFIG.load(deps.storage)?;
+            drop_ownership_proposal(deps, info, config.owner, OWNERSHIP_PROPOSAL)
+                .map_err(Into::into)
+        }
+        ExecuteMsg::ClaimOwnership {} => {
+            claim_ownership(deps, info, env, OWNERSHIP_PROPOSAL, |deps, new_owner| {
+                CONFIG
+                    .update::<_, StdError>(deps.storage, |mut v| {
+                        v.owner = new_owner;
+                        Ok(v)
+                    })
+                    .map(|_| ())
+            })
+            .map_err(Into::into)
+        }
     }
 }
 
-fn activate_token(
+/// Enable the bridging of a CFT-20 token
+///
+/// If this token doesn't have a corresponding TokenFactory token one will
+/// be created using the information provided.
+///
+/// If the token already has a
+/// TokenFactory token and is currently enabled, no action is taken.
+///
+/// Lastly, if the token has a TokenFactory token but is currently disabled,
+/// it will be enabled again without any further changes
+fn enable_token(
     deps: DepsMut<NeutronQuery>,
     env: Env,
     info: MessageInfo,
     ticker: String,
     name: String,
+    image_url: String,
     decimals: u32,
 ) -> Result<Response<NeutronMsg>, ContractError> {
     // If we already have this token, return an error
@@ -99,6 +147,7 @@ fn activate_token(
     let metadata = TokenMetadata {
         ticker,
         name,
+        image_url,
         decimals,
     };
     TOKEN_METADATA.save(deps.storage, &metadata)?;
@@ -135,15 +184,16 @@ pub fn reply(deps: DepsMut, env: Env, msg: Reply) -> Result<Response, ContractEr
                         },
                     ],
                     description: format!(
-                        "{} is a CFT-20 token bridged from the Cosmos Hub",
+                        "{} is an Asteroid CFT-20 token bridged from the Cosmos Hub",
                         metadata.ticker
                     ),
-                    uri: "https://app.astroport.fi/tokens/xAstro.svg".to_string(),
-                    uri_hash: "d39cfe20605a9857b2b123c6d6dbbdf4d3b65cb9d411cee1011877b918b4c646"
-                        .to_string(),
+                    uri: metadata.image_url,
+                    uri_hash: "".to_string(),
                 }),
             };
 
+            // Save the mapping of TICKER <> DENOM both ways to ease lookups
+            // in both directions
             TOKEN_MAPPING.save(deps.storage, &metadata.ticker, &new_token_denom)?;
             TOKEN_MAPPING.save(deps.storage, &new_token_denom, &metadata.ticker)?;
             TOKEN_METADATA.remove(deps.storage);
@@ -275,11 +325,59 @@ fn bridge_send(
     Ok(response)
 }
 
+/// Add a signer for verification
+fn add_signer(
+    deps: DepsMut<NeutronQuery>,
+    _env: Env,
+    info: MessageInfo,
+    public_key: String,
+    name: String,
+) -> Result<Response<NeutronMsg>, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+
+    // Only owner can update the config
+    if info.sender != config.owner {
+        return Err(ContractError::Unauthorized {});
+    }
+
+    if SIGNERS.has(deps.storage, &public_key) {
+        return Err(ContractError::KeyAlreadyLoaded {});
+    }
+
+    SIGNERS.save(deps.storage, &public_key, &name)?;
+
+    Ok(Response::default())
+}
+
+/// Remove a signer from verification
+fn remove_signer(
+    deps: DepsMut<NeutronQuery>,
+    _env: Env,
+    info: MessageInfo,
+    public_key: String,
+) -> Result<Response<NeutronMsg>, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+
+    // Only owner can update the config
+    if info.sender != config.owner {
+        return Err(ContractError::Unauthorized {});
+    }
+
+    if SIGNERS.has(deps.storage, &public_key) {
+        return Err(ContractError::KeyNotLoaded {});
+    }
+
+    SIGNERS.remove(deps.storage, &public_key);
+
+    Ok(Response::default())
+}
+
 /// Update the Outpost config
 fn update_config(
     deps: DepsMut<NeutronQuery>,
     env: Env,
     info: MessageInfo,
+    bridge_ibc_channel: Option<String>,
     ibc_timeout_seconds: Option<u64>,
 ) -> Result<Response<NeutronMsg>, ContractError> {
     let mut config = CONFIG.load(deps.storage)?;
@@ -289,7 +387,16 @@ fn update_config(
         return Err(ContractError::Unauthorized {});
     }
 
-    // TODO: Do the update
+    if let Some(ibc_timeout_seconds) = ibc_timeout_seconds {
+        if !(MIN_IBC_TIMEOUT_SECONDS..=MAX_IBC_TIMEOUT_SECONDS).contains(&ibc_timeout_seconds) {
+            return Err(ContractError::InvalidIBCTimeout {
+                timeout: ibc_timeout_seconds,
+                min: MIN_IBC_TIMEOUT_SECONDS,
+                max: MAX_IBC_TIMEOUT_SECONDS,
+            });
+        }
+        config.ibc_timeout_seconds = ibc_timeout_seconds;
+    }
 
     CONFIG.save(deps.storage, &config)?;
 

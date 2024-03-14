@@ -3,7 +3,8 @@ use cw2::set_contract_version;
 
 use crate::error::ContractError;
 use crate::msg::{InstantiateMsg, MigrateMsg};
-use crate::state::{Config, CONFIG};
+use crate::state::CONFIG;
+use crate::types::{Config, MAX_IBC_TIMEOUT_SECONDS, MIN_IBC_TIMEOUT_SECONDS};
 
 /// Contract name that is used for migration.
 const CONTRACT_NAME: &str = "asteroid-bridge";
@@ -21,8 +22,20 @@ pub fn instantiate(
 ) -> Result<Response, ContractError> {
     set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
 
+    if !(MIN_IBC_TIMEOUT_SECONDS..=MAX_IBC_TIMEOUT_SECONDS).contains(&msg.ibc_timeout_seconds) {
+        return Err(ContractError::InvalidIBCTimeout {
+            timeout: msg.ibc_timeout_seconds,
+            min: MIN_IBC_TIMEOUT_SECONDS,
+            max: MAX_IBC_TIMEOUT_SECONDS,
+        });
+    }
+
+    // TODO: Validate the bridge IBC channel
+
     let config = Config {
         owner: deps.api.addr_validate(&msg.owner)?,
+        bridge_ibc_channel: msg.bridge_ibc_channel,
+        ibc_timeout_seconds: msg.ibc_timeout_seconds,
     };
     CONFIG.save(deps.storage, &config)?;
 

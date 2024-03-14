@@ -1,6 +1,34 @@
-use cosmwasm_std::{Coin, IbcTimeout};
+use cosmwasm_schema::cw_serde;
+use cosmwasm_std::{Addr, Coin, IbcTimeout};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+
+// Minimum IBC timeout is 5 seconds
+pub const MIN_IBC_TIMEOUT_SECONDS: u64 = 5;
+// Maximum IBC timeout is 1 hour
+pub const MAX_IBC_TIMEOUT_SECONDS: u64 = 60 * 60;
+
+#[cw_serde]
+pub struct Config {
+    /// The owner's address
+    pub owner: Addr,
+    /// The channel used to communicate with the Hub
+    pub bridge_ibc_channel: String,
+    /// The timeout in seconds for IBC packets
+    pub ibc_timeout_seconds: u64,
+}
+
+#[cw_serde]
+pub struct TokenMetadata {
+    /// The ticker of the CFT-20 token
+    pub ticker: String,
+    /// The name of the CFT-20 token
+    pub name: String,
+    /// The URL to the CFT-20 token's image
+    pub image_url: String,
+    /// The amount of decimals this CFT-20 uses
+    pub decimals: u32,
+}
 
 /// These are messages in the IBC lifecycle. Only usable by IBC-enabled contracts
 /// (contracts that directly speak the IBC protocol via 6 entry points)

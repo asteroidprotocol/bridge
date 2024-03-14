@@ -1,6 +1,8 @@
 use crate::msg::QueryMsg;
 use crate::state::CONFIG;
-use cosmwasm_std::{entry_point, to_json_binary, Binary, Deps, Env, StdResult};
+use cosmwasm_crypto::ed25519_verify;
+use cosmwasm_std::{entry_point, to_json_binary, to_json_string, Binary, Deps, Env, StdResult};
+use osmosis_std::types::cosmos::crypto::ed25519;
 
 /// Expose available contract queries.
 ///
@@ -10,6 +12,79 @@ use cosmwasm_std::{entry_point, to_json_binary, Binary, Deps, Env, StdResult};
 pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> StdResult<Binary> {
     match msg {
         QueryMsg::Config {} => to_json_binary(&CONFIG.load(deps.storage)?),
+        QueryMsg::TestSignature {
+            public_key,
+            signature,
+            attestation,
+        } => test_signature(public_key, signature, attestation),
+    }
+}
+
+fn test_signature(public_key: String, signature: String, attestation: String) -> StdResult<Binary> {
+    println!("\n\n\n===========\nCheck signature!");
+
+    // TODO: Continue here
+    ed25519_verify();
+
+    println!("\n===========\n\n\n\n");
+    to_json_binary("String")
+}
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+
+    use cosmwasm_std::{testing::mock_info, StdError, Uint64};
+
+    use crate::{contract::instantiate, execute::execute, msg::InstantiateMsg, query::query};
+
+    use cosmwasm_std::testing::{mock_dependencies, mock_env, MockApi, MockQuerier, MockStorage};
+    // Test Cases:
+    //
+    // Expect Success
+    //      - Can query for a vote already cast
+    //
+    // Expect Error
+    //      - Must fail if the vote doesn't exist
+    //
+    #[test]
+    fn query_test_signature() {
+        // let (mut deps, env, info) = mock_all(OWNER);
+
+        let mut deps = mock_dependencies();
+        let info = mock_info(&String::from("anyone"), &[]);
+        let env = mock_env();
+
+        let owner = "owner";
+        let ibc_timeout_seconds = 10u64;
+        let bridge_ibc_channel = "channel-0";
+
+        instantiate(
+            deps.as_mut(),
+            env.clone(),
+            info,
+            InstantiateMsg {
+                owner: owner.to_string(),
+                bridge_ibc_channel: bridge_ibc_channel.to_string(),
+                ibc_timeout_seconds,
+            },
+        )
+        .unwrap();
+
+        // Check that we can query the vote that was cast
+        let verified_signature = query(
+            deps.as_ref(),
+            env,
+            QueryMsg::TestSignature {
+                public_key: "key".to_string(),
+                signature: "signature".to_string(),
+                attestation: "attest".to_string(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(verified_signature, to_json_binary(&"success").unwrap());
     }
 }
 

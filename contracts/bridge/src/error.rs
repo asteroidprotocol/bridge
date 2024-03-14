@@ -23,6 +23,12 @@ pub enum ContractError {
     #[error("The CFT-20 token '{ticker}' has not been activated for bridging")]
     TokenDoesNotExist { ticker: String },
 
+    #[error("The public key has already been added")]
+    KeyAlreadyLoaded {},
+
+    #[error("The public key is not loaded")]
+    KeyNotLoaded {},
+
     #[error("You can not send 0 CFT-20 tokens")]
     ZeroAmount {},
 

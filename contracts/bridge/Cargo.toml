@@ -37,6 +37,8 @@ serde-json-wasm = "0.5.1"
 base64 = { version = "0.13.0", default-features = false }
 osmosis-std = "0.21"
 neutron-sdk = "0.8"
+astroport = "3.11.1"
+cosmwasm-crypto = "2.0.0"
 
 [dev-dependencies]
 cw-multi-test = "0.16.5"
