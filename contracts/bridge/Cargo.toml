@@ -34,7 +34,7 @@ semver = "1.0.17"
 serde = { version = "1.0.164", default-features = false, features = ["derive"] }
 thiserror = "1.0.40"
 serde-json-wasm = "0.5.1"
-base64 = { version = "0.13.0", default-features = false }
+data-encoding = "2.5.0"
 osmosis-std = "0.21"
 neutron-sdk = "0.8"
 astroport = "3.11.1"

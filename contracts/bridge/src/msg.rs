@@ -79,11 +79,11 @@ pub enum QueryMsg {
     /// Returns the config of the Bridge
     #[returns(Config)]
     Config {},
-
+    /// Test whether a signature is valid given the public key and attestation
     #[returns(String)]
-    TestSignature {
-        public_key: String,
-        signature: String,
+    TestVerifySignature {
+        public_key_base64: String,
+        signature_base64: String,
         attestation: String,
     }, // /// Returns the allowed signers for signature verification
        // Signers {},
