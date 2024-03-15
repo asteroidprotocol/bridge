@@ -1,18 +1,21 @@
 use astroport::common::{claim_ownership, drop_ownership_proposal, propose_new_owner};
+use base64::{engine::general_purpose, Engine as _};
 use cosmwasm_std::{
     coin, entry_point, BankMsg, CosmosMsg, IbcMsg, IbcTimeout, Reply, StdError, SubMsg, Uint128,
 };
 use cosmwasm_std::{DepsMut, Env, MessageInfo, Response};
 use cw_utils::one_coin;
+use ed25519_dalek::{VerifyingKey, PUBLIC_KEY_LENGTH};
 use neutron_sdk::bindings::query::NeutronQuery;
 use neutron_sdk::query::min_ibc_fee::query_min_ibc_fee;
 use neutron_sdk::sudo::msg::RequestPacketTimeoutHeight;
 use osmosis_std::types::cosmos::bank::v1beta1::{DenomUnit, Metadata};
+use osmosis_std::types::cosmos::crypto::ed25519;
 
 use crate::msg::ExecuteMsg;
-use crate::state::{OWNERSHIP_PROPOSAL, SIGNERS, TOKEN_MAPPING, TOKEN_METADATA};
+use crate::state::{DISABLED_TOKENS, OWNERSHIP_PROPOSAL, SIGNERS, TOKEN_MAPPING, TOKEN_METADATA};
 use crate::types::{
-    Config, CustomIbcMsg, TokenMetadata, MAX_IBC_TIMEOUT_SECONDS, MIN_IBC_TIMEOUT_SECONDS,
+    Config, CustomIbcMsg, TokenMetadata, Verifier, MAX_IBC_TIMEOUT_SECONDS, MIN_IBC_TIMEOUT_SECONDS,
 };
 use crate::{error::ContractError, state::CONFIG};
 
@@ -61,24 +64,34 @@ pub fn execute(
     msg: ExecuteMsg,
 ) -> Result<Response<NeutronMsg>, ContractError> {
     match msg {
-        ExecuteMsg::EnableToken {
-            ticker,
-            name,
-            image_url,
-            decimals,
-        } => enable_token(deps, env, info, ticker, name, image_url, decimals),
+        ExecuteMsg::LinkToken { token, verifiers } => link_token(deps, env, info, token, verifiers),
+        ExecuteMsg::EnableToken { ticker } => enable_token(deps, env, info, ticker),
+        ExecuteMsg::DisableToken { ticker } => disable_token(deps, env, info, ticker),
         // ExecuteMsg::Receive {
         //     ticker,
         //     amount,
         //     destination_addr,
         // } => bridge_receive(deps, env, info, ticker, amount, destination_addr),
         // ExecuteMsg::Send { destination_addr } => bridge_send(deps, env, info, destination_addr),
-        ExecuteMsg::AddSigner { public_key, name } => add_signer(deps, env, info, public_key, name),
-        ExecuteMsg::RemoveSigner { public_key } => remove_signer(deps, env, info, public_key),
+        ExecuteMsg::AddSigner {
+            public_key_base64,
+            name,
+        } => add_signer(deps, env, info, public_key_base64, name),
+        ExecuteMsg::RemoveSigner { public_key_base64 } => {
+            remove_signer(deps, env, info, public_key_base64)
+        }
         ExecuteMsg::UpdateConfig {
+            signer_threshold,
             bridge_ibc_channel,
             ibc_timeout_seconds,
-        } => update_config(deps, env, info, bridge_ibc_channel, ibc_timeout_seconds),
+        } => update_config(
+            deps,
+            env,
+            info,
+            signer_threshold,
+            bridge_ibc_channel,
+            ibc_timeout_seconds,
+        ),
         ExecuteMsg::ProposeNewOwner { owner, expires_in } => {
             let config = CONFIG.load(deps.storage)?;
             propose_new_owner(
@@ -121,38 +134,101 @@ pub fn execute(
 ///
 /// Lastly, if the token has a TokenFactory token but is currently disabled,
 /// it will be enabled again without any further changes
-fn enable_token(
+fn link_token(
     deps: DepsMut<NeutronQuery>,
     env: Env,
     info: MessageInfo,
-    ticker: String,
-    name: String,
-    image_url: String,
-    decimals: u32,
+    token: TokenMetadata,
+    verifiers: Vec<Verifier>,
 ) -> Result<Response<NeutronMsg>, ContractError> {
     // If we already have this token, return an error
-    if TOKEN_MAPPING.has(deps.storage, &ticker) {
-        return Err(ContractError::TokenAlreadyExists { ticker });
+    if TOKEN_MAPPING.has(deps.storage, &token.ticker) {
+        return Err(ContractError::TokenAlreadyExists {
+            ticker: token.ticker,
+        });
     }
+
+    if verifiers.is_empty() {
+        return Err(ContractError::Unauthorized {});
+    }
+
+    // Check if all the verifier public keys are in SIGNERS
+    for verifier in verifiers {
+        if !SIGNERS.has(deps.storage, &verifier.public_key_base64.as_bytes()) {
+            return Err(ContractError::VerifierNotLoaded {
+                public_key_base64: verifier.public_key_base64,
+            });
+        }
+    }
+
+    // TODO: Verify that the threshold is met by verifying the provided signatures
 
     // If not, create the denom and set the metadata
     let create_denom_msg = SubMsg::reply_on_success(
         MsgCreateDenom {
             sender: env.contract.address.to_string(),
-            subdenom: ticker.clone(),
+            subdenom: token.ticker.clone(),
         },
         ReplyIds::InstantiateNewDenom as u64,
     );
 
-    let metadata = TokenMetadata {
-        ticker,
-        name,
-        image_url,
-        decimals,
-    };
-    TOKEN_METADATA.save(deps.storage, &metadata)?;
+    TOKEN_METADATA.save(deps.storage, &token)?;
 
     Ok(Response::new().add_submessage(create_denom_msg))
+}
+
+fn enable_token(
+    deps: DepsMut<NeutronQuery>,
+    _env: Env,
+    info: MessageInfo,
+    ticker: String,
+) -> Result<Response<NeutronMsg>, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+
+    // Only owner can update the config
+    if info.sender != config.owner {
+        return Err(ContractError::Unauthorized {});
+    }
+
+    // If this token isn't in the disabled list, return an error
+    if !DISABLED_TOKENS.has(deps.storage, &ticker) {
+        return Err(ContractError::Std(StdError::generic_err(
+            "This token is not disabled",
+        )));
+    }
+
+    // TODO Decide if we should remove the token completely, or rather have a block list
+    DISABLED_TOKENS.remove(deps.storage, &ticker);
+
+    Ok(Response::new()
+        .add_attribute("action", "enable_token")
+        .add_attribute("ticker", ticker))
+}
+
+fn disable_token(
+    deps: DepsMut<NeutronQuery>,
+    _env: Env,
+    info: MessageInfo,
+    ticker: String,
+) -> Result<Response<NeutronMsg>, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+
+    // Only owner can update the config
+    if info.sender != config.owner {
+        return Err(ContractError::Unauthorized {});
+    }
+
+    // If this token doesn't exist, return an error
+    if !TOKEN_MAPPING.has(deps.storage, &ticker) {
+        return Err(ContractError::TokenDoesNotExist { ticker });
+    }
+
+    // TODO Decide if we should remove the token completely, or rather have a block list
+    DISABLED_TOKENS.save(deps.storage, &ticker, &true)?;
+
+    Ok(Response::new()
+        .add_attribute("action", "disable_token")
+        .add_attribute("ticker", ticker))
 }
 
 /// The entry point to the contract for processing replies from submessages.
@@ -214,6 +290,11 @@ fn bridge_receive(
     // TODO
     // On receive, check if the signature for this tranfer is valid, if not, reject
 
+    // Check if the token is disabled
+    if DISABLED_TOKENS.load(deps.storage, &ticker)? {
+        return Err(ContractError::TokenDisabled { ticker });
+    }
+
     // Check the amount sent, if 0, reject
     if amount.is_zero() {
         return Err(ContractError::ZeroAmount {});
@@ -266,6 +347,13 @@ fn bridge_send(
 
     // Check the mapping for this token, fail if no mapping exists
     let cft20_denom = TOKEN_MAPPING.load(deps.storage, &bridging_coin.denom)?;
+
+    // Check if the token is disabled
+    if DISABLED_TOKENS.load(deps.storage, &cft20_denom)? {
+        return Err(ContractError::TokenDisabled {
+            ticker: cft20_denom,
+        });
+    }
 
     // Contruct the IBC memo message to return X of denom on the Hub
 
@@ -330,7 +418,7 @@ fn add_signer(
     deps: DepsMut<NeutronQuery>,
     _env: Env,
     info: MessageInfo,
-    public_key: String,
+    public_key_base64: String,
     name: String,
 ) -> Result<Response<NeutronMsg>, ContractError> {
     let config = CONFIG.load(deps.storage)?;
@@ -339,6 +427,17 @@ fn add_signer(
     if info.sender != config.owner {
         return Err(ContractError::Unauthorized {});
     }
+
+    // Decode the base64 encoded public key
+    let public_key = match general_purpose::STANDARD.decode(public_key_base64.as_bytes()) {
+        Ok(bytes) => bytes,
+        Err(e) => panic!("Failed to decode public key base64: {}", e),
+    };
+
+    // TODO Handle this correctly
+    // Try loading the public key to see if it is in valid format
+    let public_key_bytes: [u8; PUBLIC_KEY_LENGTH] = public_key.clone().try_into().unwrap();
+    VerifyingKey::from_bytes(&public_key_bytes).unwrap();
 
     if SIGNERS.has(deps.storage, &public_key) {
         return Err(ContractError::KeyAlreadyLoaded {});
@@ -354,7 +453,7 @@ fn remove_signer(
     deps: DepsMut<NeutronQuery>,
     _env: Env,
     info: MessageInfo,
-    public_key: String,
+    public_key_base64: String,
 ) -> Result<Response<NeutronMsg>, ContractError> {
     let config = CONFIG.load(deps.storage)?;
 
@@ -362,6 +461,12 @@ fn remove_signer(
     if info.sender != config.owner {
         return Err(ContractError::Unauthorized {});
     }
+
+    // Decode the base64 encoded public key
+    let public_key = match general_purpose::STANDARD.decode(public_key_base64.as_bytes()) {
+        Ok(bytes) => bytes,
+        Err(e) => panic!("Failed to decode public key base64: {}", e),
+    };
 
     if SIGNERS.has(deps.storage, &public_key) {
         return Err(ContractError::KeyNotLoaded {});
@@ -375,8 +480,9 @@ fn remove_signer(
 /// Update the Outpost config
 fn update_config(
     deps: DepsMut<NeutronQuery>,
-    env: Env,
+    _env: Env,
     info: MessageInfo,
+    signer_threshold: Option<u8>,
     bridge_ibc_channel: Option<String>,
     ibc_timeout_seconds: Option<u64>,
 ) -> Result<Response<NeutronMsg>, ContractError> {
@@ -396,6 +502,18 @@ fn update_config(
             });
         }
         config.ibc_timeout_seconds = ibc_timeout_seconds;
+    }
+
+    // TODO Verify valid IBC channel
+
+    if let Some(bridge_ibc_channel) = bridge_ibc_channel {
+        config.bridge_ibc_channel = bridge_ibc_channel;
+    }
+
+    // TODO Verify threshold
+
+    if let Some(signer_threshold) = signer_threshold {
+        config.signer_threshold = signer_threshold;
     }
 
     CONFIG.save(deps.storage, &config)?;
@@ -418,824 +536,3 @@ fn min_ntrn_ibc_fee(fee: IbcFee) -> IbcFee {
             .collect(),
     }
 }
-
-// #[cfg(test)]
-// mod tests {
-
-//     use super::*;
-
-//     use cosmwasm_std::{testing::mock_info, IbcMsg, ReplyOn, SubMsg, Uint128, Uint64};
-
-//     use crate::{
-//         contract::instantiate,
-//         mock::{mock_all, setup_channel, HUB, OWNER, VXASTRO_TOKEN, XASTRO_TOKEN},
-//         query::query,
-//     };
-//     use astroport_governance::interchain::{Hub, ProposalSnapshot};
-
-//     // Test Cases:
-//     //
-//     // Expect Success
-//     //      - An unstake IBC message is emitted
-//     //
-//     // Expect Error
-//     //      - No xASTRO is sent to the contract
-//     //      - The funds sent to the contract is not xASTRO
-//     //      - The Hub address and channel isn't set
-//     //
-//     #[test]
-//     fn unstake() {
-//         let (mut deps, env, info) = mock_all(OWNER);
-
-//         let user = "user";
-//         let user_funds = Uint128::from(1000u128);
-//         let ibc_timeout_seconds = 10u64;
-
-//         instantiate(
-//             deps.as_mut(),
-//             env.clone(),
-//             info,
-//             astroport_governance::outpost::InstantiateMsg {
-//                 owner: OWNER.to_string(),
-//                 xastro_token_addr: XASTRO_TOKEN.to_string(),
-//                 vxastro_token_addr: VXASTRO_TOKEN.to_string(),
-//                 hub_addr: HUB.to_string(),
-//                 ibc_timeout_seconds: 10,
-//             },
-//         )
-//         .unwrap();
-
-//         // Set up valid Hub
-//         setup_channel(deps.as_mut(), env.clone());
-
-//         // Update config with new channel
-//         execute(
-//             deps.as_mut(),
-//             env.clone(),
-//             mock_info(OWNER, &[]),
-//             astroport_governance::outpost::ExecuteMsg::UpdateConfig {
-//                 hub_addr: None,
-//                 hub_channel: Some("channel-3".to_string()),
-//                 ibc_timeout_seconds: None,
-//             },
-//         )
-//         .unwrap();
-
-//         // Attempt to unstake with an incorrect token
-//         let err = execute(
-//             deps.as_mut(),
-//             env.clone(),
-//             mock_info("not_xastro", &[]),
-//             astroport_governance::outpost::ExecuteMsg::Receive(Cw20ReceiveMsg {
-//                 sender: user.to_string(),
-//                 amount: user_funds,
-//                 msg: to_binary(&astroport_governance::outpost::Cw20HookMsg::Unstake {}).unwrap(),
-//             }),
-//         )
-//         .unwrap_err();
-
-//         assert_eq!(err, ContractError::Unauthorized {});
-
-//         // Attempt to unstake correctly
-//         let res = execute(
-//             deps.as_mut(),
-//             env.clone(),
-//             mock_info(XASTRO_TOKEN, &[]),
-//             astroport_governance::outpost::ExecuteMsg::Receive(Cw20ReceiveMsg {
-//                 sender: user.to_string(),
-//                 amount: user_funds,
-//                 msg: to_binary(&astroport_governance::outpost::Cw20HookMsg::Unstake {}).unwrap(),
-//             }),
-//         )
-//         .unwrap();
-
-//         // Build the expected message
-//         let ibc_message = to_binary(&Hub::Unstake {
-//             receiver: user.to_string(),
-//             amount: user_funds,
-//         })
-//         .unwrap();
-
-//         // We should have two messages
-//         assert_eq!(res.messages.len(), 2);
-
-//         // First message must be the burn of the amount of xASTRO sent
-//         assert_eq!(
-//             res.messages[0],
-//             SubMsg {
-//                 id: 0,
-//                 gas_limit: None,
-//                 reply_on: ReplyOn::Never,
-//                 msg: WasmMsg::Execute {
-//                     contract_addr: XASTRO_TOKEN.to_string(),
-//                     msg: to_binary(&Cw20ExecuteMsg::Burn { amount: user_funds }).unwrap(),
-//                     funds: vec![],
-//                 }
-//                 .into(),
-//             }
-//         );
-
-//         // Second message must be the IBC unstake
-//         assert_eq!(
-//             res.messages[1],
-//             SubMsg {
-//                 id: 0,
-//                 gas_limit: None,
-//                 reply_on: ReplyOn::Never,
-//                 msg: IbcMsg::SendPacket {
-//                     channel_id: "channel-3".to_string(),
-//                     data: ibc_message,
-//                     timeout: env.block.time.plus_seconds(ibc_timeout_seconds).into(),
-//                 }
-//                 .into(),
-//             }
-//         );
-//     }
-
-//     // Test Cases:
-//     //
-//     // Expect Success
-//     //      - The config is updated
-//     //
-//     // Expect Error
-//     //      - When the config is updated by a non-owner
-//     //
-//     #[test]
-//     fn update_config() {
-//         let (mut deps, env, info) = mock_all(OWNER);
-
-//         instantiate(
-//             deps.as_mut(),
-//             env.clone(),
-//             info,
-//             astroport_governance::outpost::InstantiateMsg {
-//                 owner: OWNER.to_string(),
-//                 xastro_token_addr: XASTRO_TOKEN.to_string(),
-//                 vxastro_token_addr: VXASTRO_TOKEN.to_string(),
-//                 hub_addr: HUB.to_string(),
-//                 ibc_timeout_seconds: 10,
-//             },
-//         )
-//         .unwrap();
-
-//         setup_channel(deps.as_mut(), env.clone());
-
-//         // Attempt to update the hub address by a non-owner
-//         let err = execute(
-//             deps.as_mut(),
-//             env.clone(),
-//             mock_info("not_owner", &[]),
-//             astroport_governance::outpost::ExecuteMsg::UpdateConfig {
-//                 hub_addr: Some("new_hub".to_string()),
-//                 hub_channel: None,
-//                 ibc_timeout_seconds: None,
-//             },
-//         )
-//         .unwrap_err();
-//         assert_eq!(err, ContractError::Unauthorized {});
-
-//         let config = query(
-//             deps.as_ref(),
-//             env.clone(),
-//             astroport_governance::outpost::QueryMsg::Config {},
-//         )
-//         .unwrap();
-
-//         // Ensure the config set during instantiation is still there
-//         assert_eq!(
-//             config,
-//             to_binary(&astroport_governance::outpost::Config {
-//                 owner: Addr::unchecked(OWNER),
-//                 xastro_token_addr: Addr::unchecked(XASTRO_TOKEN),
-//                 vxastro_token_addr: Addr::unchecked(VXASTRO_TOKEN),
-//                 hub_addr: HUB.to_string(),
-//                 hub_channel: None,
-//                 ibc_timeout_seconds: 10,
-//             })
-//             .unwrap()
-//         );
-
-//         // Attempt to update the hub address by the owner
-//         execute(
-//             deps.as_mut(),
-//             env.clone(),
-//             mock_info(OWNER, &[]),
-//             astroport_governance::outpost::ExecuteMsg::UpdateConfig {
-//                 hub_addr: Some("new_owner_hub".to_string()),
-//                 hub_channel: None,
-//                 ibc_timeout_seconds: None,
-//             },
-//         )
-//         .unwrap();
-
-//         let config = query(
-//             deps.as_ref(),
-//             env.clone(),
-//             astroport_governance::outpost::QueryMsg::Config {},
-//         )
-//         .unwrap();
-
-//         // Ensure the config set after the update is correct
-//         // Once a new Hub is set, the Hub channel is cleared to allow a new
-//         // connection
-//         assert_eq!(
-//             config,
-//             to_binary(&astroport_governance::outpost::Config {
-//                 owner: Addr::unchecked(OWNER),
-//                 xastro_token_addr: Addr::unchecked(XASTRO_TOKEN),
-//                 vxastro_token_addr: Addr::unchecked(VXASTRO_TOKEN),
-//                 hub_addr: "new_owner_hub".to_string(),
-//                 hub_channel: None,
-//                 ibc_timeout_seconds: 10,
-//             })
-//             .unwrap()
-//         );
-
-//         // Update the hub channel
-//         execute(
-//             deps.as_mut(),
-//             env.clone(),
-//             mock_info(OWNER, &[]),
-//             astroport_governance::outpost::ExecuteMsg::UpdateConfig {
-//                 hub_addr: None,
-//                 hub_channel: Some("channel-15".to_string()),
-//                 ibc_timeout_seconds: None,
-//             },
-//         )
-//         .unwrap();
-
-//         let config = query(
-//             deps.as_ref(),
-//             env.clone(),
-//             astroport_governance::outpost::QueryMsg::Config {},
-//         )
-//         .unwrap();
-
-//         // Ensure the config set after the update is correct
-//         // Once a new Hub is set, the Hub channel is cleared to allow a new
-//         // connection
-//         assert_eq!(
-//             config,
-//             to_binary(&astroport_governance::outpost::Config {
-//                 owner: Addr::unchecked(OWNER),
-//                 xastro_token_addr: Addr::unchecked(XASTRO_TOKEN),
-//                 vxastro_token_addr: Addr::unchecked(VXASTRO_TOKEN),
-//                 hub_addr: "new_owner_hub".to_string(),
-//                 hub_channel: Some("channel-15".to_string()),
-//                 ibc_timeout_seconds: 10,
-//             })
-//             .unwrap()
-//         );
-
-//         // Update the IBC timeout
-//         execute(
-//             deps.as_mut(),
-//             env.clone(),
-//             mock_info(OWNER, &[]),
-//             astroport_governance::outpost::ExecuteMsg::UpdateConfig {
-//                 hub_addr: None,
-//                 hub_channel: None,
-//                 ibc_timeout_seconds: Some(35),
-//             },
-//         )
-//         .unwrap();
-
-//         let config = query(
-//             deps.as_ref(),
-//             env,
-//             astroport_governance::outpost::QueryMsg::Config {},
-//         )
-//         .unwrap();
-
-//         // Ensure the config set after the update is correct
-//         // Once a new Hub is set, the Hub channel is cleared to allow a new
-//         // connection
-//         assert_eq!(
-//             config,
-//             to_binary(&astroport_governance::outpost::Config {
-//                 owner: Addr::unchecked(OWNER),
-//                 xastro_token_addr: Addr::unchecked(XASTRO_TOKEN),
-//                 vxastro_token_addr: Addr::unchecked(VXASTRO_TOKEN),
-//                 hub_addr: "new_owner_hub".to_string(),
-//                 hub_channel: Some("channel-15".to_string()),
-//                 ibc_timeout_seconds: 35,
-//             })
-//             .unwrap()
-//         );
-//     }
-
-//     // Test Cases:
-//     //
-//     // Expect Success
-//     //      - A proposal query is emitted when the proposal is not in the cache
-//     //      - A vote is emitted when the proposal is in the cache
-//     //
-//     // Expect Error
-//     //      - User has no voting power at the time of the proposal
-//     //
-//     #[test]
-//     fn vote_on_proposal() {
-//         let (mut deps, env, info) = mock_all(OWNER);
-
-//         let proposal_id = 1u64;
-//         let user = "user";
-//         let voting_power = 1000u64;
-//         let ibc_timeout_seconds = 10u64;
-
-//         instantiate(
-//             deps.as_mut(),
-//             env.clone(),
-//             info,
-//             astroport_governance::outpost::InstantiateMsg {
-//                 owner: OWNER.to_string(),
-//                 xastro_token_addr: XASTRO_TOKEN.to_string(),
-//                 vxastro_token_addr: VXASTRO_TOKEN.to_string(),
-//                 hub_addr: HUB.to_string(),
-//                 ibc_timeout_seconds,
-//             },
-//         )
-//         .unwrap();
-
-//         // Set up valid Hub
-//         setup_channel(deps.as_mut(), env.clone());
-
-//         // Update config with new channel
-//         execute(
-//             deps.as_mut(),
-//             env.clone(),
-//             mock_info(OWNER, &[]),
-//             astroport_governance::outpost::ExecuteMsg::UpdateConfig {
-//                 hub_addr: None,
-//                 hub_channel: Some("channel-3".to_string()),
-//                 ibc_timeout_seconds: None,
-//             },
-//         )
-//         .unwrap();
-
-//         // Cast a vote with no proposal in the cache
-//         let res = execute(
-//             deps.as_mut(),
-//             env.clone(),
-//             mock_info(user, &[]),
-//             astroport_governance::outpost::ExecuteMsg::CastAssemblyVote {
-//                 proposal_id: 1,
-//                 vote: astroport_governance::assembly::ProposalVoteOption::For,
-//             },
-//         )
-//         .unwrap();
-
-//         // Wrap the query
-//         let ibc_message = to_binary(&Hub::QueryProposal { id: proposal_id }).unwrap();
-
-//         // Ensure a query is emitted
-//         assert_eq!(
-//             res.messages[0],
-//             SubMsg {
-//                 id: 0,
-//                 gas_limit: None,
-//                 reply_on: ReplyOn::Never,
-//                 msg: IbcMsg::SendPacket {
-//                     channel_id: "channel-3".to_string(),
-//                     data: ibc_message,
-//                     timeout: env.block.time.plus_seconds(ibc_timeout_seconds).into(),
-//                 }
-//                 .into(),
-//             }
-//         );
-
-//         // Add a proposal to the cache
-//         PROPOSALS_CACHE
-//             .save(
-//                 &mut deps.storage,
-//                 proposal_id,
-//                 &ProposalSnapshot {
-//                     id: Uint64::from(proposal_id),
-//                     start_time: 1689939457,
-//                 },
-//             )
-//             .unwrap();
-
-//         // Cast a vote with a proposal in the cache
-//         let res = execute(
-//             deps.as_mut(),
-//             env.clone(),
-//             mock_info(user, &[]),
-//             astroport_governance::outpost::ExecuteMsg::CastAssemblyVote {
-//                 proposal_id,
-//                 vote: astroport_governance::assembly::ProposalVoteOption::For,
-//             },
-//         )
-//         .unwrap();
-
-//         // Build the expected message
-//         let ibc_message = to_binary(&Hub::CastAssemblyVote {
-//             proposal_id,
-//             voter: Addr::unchecked(user),
-//             vote_option: astroport_governance::assembly::ProposalVoteOption::For,
-//             voting_power: Uint128::from(voting_power),
-//         })
-//         .unwrap();
-
-//         // We should only have 1 message
-//         assert_eq!(res.messages.len(), 1);
-
-//         // Ensure a vote is emitted
-//         assert_eq!(
-//             res.messages[0],
-//             SubMsg {
-//                 id: 0,
-//                 gas_limit: None,
-//                 reply_on: ReplyOn::Never,
-//                 msg: IbcMsg::SendPacket {
-//                     channel_id: "channel-3".to_string(),
-//                     data: ibc_message,
-//                     timeout: env.block.time.plus_seconds(ibc_timeout_seconds).into(),
-//                 }
-//                 .into(),
-//             }
-//         );
-
-//         // Cast a vote on a proposal already voted on
-//         let err = execute(
-//             deps.as_mut(),
-//             env.clone(),
-//             mock_info(user, &[]),
-//             astroport_governance::outpost::ExecuteMsg::CastAssemblyVote {
-//                 proposal_id,
-//                 vote: astroport_governance::assembly::ProposalVoteOption::For,
-//             },
-//         )
-//         .unwrap_err();
-
-//         assert_eq!(err, ContractError::AlreadyVoted {});
-
-//         // Check that we can query the vote
-//         let vote_data = query(
-//             deps.as_ref(),
-//             env,
-//             astroport_governance::outpost::QueryMsg::ProposalVoted {
-//                 proposal_id,
-//                 user: user.to_string(),
-//             },
-//         )
-//         .unwrap();
-
-//         assert_eq!(vote_data, to_binary(&ProposalVoteOption::For).unwrap());
-//     }
-
-//     // Test Cases:
-//     //
-//     // Expect Success
-//     //      - An emissions vote is emitted is the user has voting power
-//     //
-//     // Expect Error
-//     //      - User has no voting power
-//     //
-//     #[test]
-//     fn vote_on_emissions() {
-//         let (mut deps, env, info) = mock_all(OWNER);
-
-//         let user = "user";
-//         let votes = vec![("pool".to_string(), 10000u16)];
-//         let voting_power = 1000u64;
-//         let ibc_timeout_seconds = 10u64;
-
-//         instantiate(
-//             deps.as_mut(),
-//             env.clone(),
-//             info,
-//             astroport_governance::outpost::InstantiateMsg {
-//                 owner: OWNER.to_string(),
-//                 xastro_token_addr: XASTRO_TOKEN.to_string(),
-//                 vxastro_token_addr: VXASTRO_TOKEN.to_string(),
-//                 hub_addr: HUB.to_string(),
-//                 ibc_timeout_seconds,
-//             },
-//         )
-//         .unwrap();
-
-//         // Set up valid Hub
-//         setup_channel(deps.as_mut(), env.clone());
-
-//         // Update config with new channel
-//         execute(
-//             deps.as_mut(),
-//             env.clone(),
-//             mock_info(OWNER, &[]),
-//             astroport_governance::outpost::ExecuteMsg::UpdateConfig {
-//                 hub_addr: None,
-//                 hub_channel: Some("channel-3".to_string()),
-//                 ibc_timeout_seconds: None,
-//             },
-//         )
-//         .unwrap();
-
-//         // Cast a vote on emissions
-//         let res = execute(
-//             deps.as_mut(),
-//             env.clone(),
-//             mock_info(user, &[]),
-//             astroport_governance::outpost::ExecuteMsg::CastEmissionsVote {
-//                 votes: votes.clone(),
-//             },
-//         )
-//         .unwrap();
-
-//         // Build the expected message
-//         let ibc_message = to_binary(&Hub::CastEmissionsVote {
-//             voter: Addr::unchecked(user),
-//             votes,
-//             voting_power: Uint128::from(voting_power),
-//         })
-//         .unwrap();
-
-//         // We should only have 1 message
-//         assert_eq!(res.messages.len(), 1);
-
-//         // Ensure a vote is emitted
-//         assert_eq!(
-//             res.messages[0],
-//             SubMsg {
-//                 id: 0,
-//                 gas_limit: None,
-//                 reply_on: ReplyOn::Never,
-//                 msg: IbcMsg::SendPacket {
-//                     channel_id: "channel-3".to_string(),
-//                     data: ibc_message,
-//                     timeout: env.block.time.plus_seconds(ibc_timeout_seconds).into(),
-//                 }
-//                 .into(),
-//             }
-//         );
-//     }
-
-//     // Test Cases:
-//     //
-//     // Expect Success
-//     //      - The kick message is forwarded
-//     //
-//     // Expect Error
-//     //      - When the sender is not the vxASTRO contract
-//     //
-//     #[test]
-//     fn kick_unlocked() {
-//         let (mut deps, env, info) = mock_all(OWNER);
-
-//         let user = "user";
-//         let ibc_timeout_seconds = 10u64;
-
-//         instantiate(
-//             deps.as_mut(),
-//             env.clone(),
-//             info,
-//             astroport_governance::outpost::InstantiateMsg {
-//                 owner: OWNER.to_string(),
-//                 xastro_token_addr: XASTRO_TOKEN.to_string(),
-//                 vxastro_token_addr: VXASTRO_TOKEN.to_string(),
-//                 hub_addr: HUB.to_string(),
-//                 ibc_timeout_seconds,
-//             },
-//         )
-//         .unwrap();
-
-//         // Set up valid Hub
-//         setup_channel(deps.as_mut(), env.clone());
-
-//         // Update config with new channel
-//         execute(
-//             deps.as_mut(),
-//             env.clone(),
-//             mock_info(OWNER, &[]),
-//             astroport_governance::outpost::ExecuteMsg::UpdateConfig {
-//                 hub_addr: None,
-//                 hub_channel: Some("channel-3".to_string()),
-//                 ibc_timeout_seconds: None,
-//             },
-//         )
-//         .unwrap();
-
-//         // Kick a user as another user, not allowed
-//         let err = execute(
-//             deps.as_mut(),
-//             env.clone(),
-//             mock_info(user, &[]),
-//             astroport_governance::outpost::ExecuteMsg::KickUnlocked {
-//                 user: Addr::unchecked(user),
-//             },
-//         )
-//         .unwrap_err();
-
-//         assert_eq!(err, ContractError::Unauthorized {});
-
-//         // Kick a user as the vxASTRO contract
-//         let res = execute(
-//             deps.as_mut(),
-//             env.clone(),
-//             mock_info(VXASTRO_TOKEN, &[]),
-//             astroport_governance::outpost::ExecuteMsg::KickUnlocked {
-//                 user: Addr::unchecked(user),
-//             },
-//         )
-//         .unwrap();
-
-//         // Build the expected message
-//         let ibc_message = to_binary(&Hub::KickUnlockedVoter {
-//             voter: Addr::unchecked(user),
-//         })
-//         .unwrap();
-
-//         // We should only have 1 message
-//         assert_eq!(res.messages.len(), 1);
-
-//         // Ensure a kick is emitted
-//         assert_eq!(
-//             res.messages[0],
-//             SubMsg {
-//                 id: 0,
-//                 gas_limit: None,
-//                 reply_on: ReplyOn::Never,
-//                 msg: IbcMsg::SendPacket {
-//                     channel_id: "channel-3".to_string(),
-//                     data: ibc_message,
-//                     timeout: env.block.time.plus_seconds(ibc_timeout_seconds).into(),
-//                 }
-//                 .into(),
-//             }
-//         );
-//     }
-
-//     // Test Cases:
-//     //
-//     // Expect Success
-//     //      - The kick message is forwarded
-//     //
-//     // Expect Error
-//     //      - When the sender is not the vxASTRO contract
-//     //
-//     #[test]
-//     fn kick_blacklisted() {
-//         let (mut deps, env, info) = mock_all(OWNER);
-
-//         let user = "user";
-//         let ibc_timeout_seconds = 10u64;
-
-//         instantiate(
-//             deps.as_mut(),
-//             env.clone(),
-//             info,
-//             astroport_governance::outpost::InstantiateMsg {
-//                 owner: OWNER.to_string(),
-//                 xastro_token_addr: XASTRO_TOKEN.to_string(),
-//                 vxastro_token_addr: VXASTRO_TOKEN.to_string(),
-//                 hub_addr: HUB.to_string(),
-//                 ibc_timeout_seconds,
-//             },
-//         )
-//         .unwrap();
-
-//         // Set up valid Hub
-//         setup_channel(deps.as_mut(), env.clone());
-
-//         // Update config with new channel
-//         execute(
-//             deps.as_mut(),
-//             env.clone(),
-//             mock_info(OWNER, &[]),
-//             astroport_governance::outpost::ExecuteMsg::UpdateConfig {
-//                 hub_addr: None,
-//                 hub_channel: Some("channel-3".to_string()),
-//                 ibc_timeout_seconds: None,
-//             },
-//         )
-//         .unwrap();
-
-//         // Kick a user as another user, not allowed
-//         let err = execute(
-//             deps.as_mut(),
-//             env.clone(),
-//             mock_info(user, &[]),
-//             astroport_governance::outpost::ExecuteMsg::KickBlacklisted {
-//                 user: Addr::unchecked(user),
-//             },
-//         )
-//         .unwrap_err();
-
-//         assert_eq!(err, ContractError::Unauthorized {});
-
-//         // Kick a user as the vxASTRO contract
-//         let res = execute(
-//             deps.as_mut(),
-//             env.clone(),
-//             mock_info(VXASTRO_TOKEN, &[]),
-//             astroport_governance::outpost::ExecuteMsg::KickBlacklisted {
-//                 user: Addr::unchecked(user),
-//             },
-//         )
-//         .unwrap();
-
-//         // Build the expected message
-//         let ibc_message = to_binary(&Hub::KickBlacklistedVoter {
-//             voter: Addr::unchecked(user),
-//         })
-//         .unwrap();
-
-//         // We should only have 1 message
-//         assert_eq!(res.messages.len(), 1);
-
-//         // Ensure a kick is emitted
-//         assert_eq!(
-//             res.messages[0],
-//             SubMsg {
-//                 id: 0,
-//                 gas_limit: None,
-//                 reply_on: ReplyOn::Never,
-//                 msg: IbcMsg::SendPacket {
-//                     channel_id: "channel-3".to_string(),
-//                     data: ibc_message,
-//                     timeout: env.block.time.plus_seconds(ibc_timeout_seconds).into(),
-//                 }
-//                 .into(),
-//             }
-//         );
-//     }
-
-//     // Test Cases:
-//     //
-//     // Expect Success
-//     //      - The kick message is forwarded
-//     //
-//     // Expect Error
-//     //      - When the sender is not the vxASTRO contract
-//     //
-//     #[test]
-//     fn withdraw_funds() {
-//         let (mut deps, env, info) = mock_all(OWNER);
-
-//         let user = "user";
-//         let ibc_timeout_seconds = 10u64;
-
-//         instantiate(
-//             deps.as_mut(),
-//             env.clone(),
-//             info,
-//             astroport_governance::outpost::InstantiateMsg {
-//                 owner: OWNER.to_string(),
-//                 xastro_token_addr: XASTRO_TOKEN.to_string(),
-//                 vxastro_token_addr: VXASTRO_TOKEN.to_string(),
-//                 hub_addr: HUB.to_string(),
-//                 ibc_timeout_seconds,
-//             },
-//         )
-//         .unwrap();
-
-//         // Set up valid Hub
-//         setup_channel(deps.as_mut(), env.clone());
-
-//         // Update config with new channel
-//         execute(
-//             deps.as_mut(),
-//             env.clone(),
-//             mock_info(OWNER, &[]),
-//             astroport_governance::outpost::ExecuteMsg::UpdateConfig {
-//                 hub_addr: None,
-//                 hub_channel: Some("channel-3".to_string()),
-//                 ibc_timeout_seconds: None,
-//             },
-//         )
-//         .unwrap();
-
-//         // Withdraw stuck funds from the Hub
-//         let res = execute(
-//             deps.as_mut(),
-//             env.clone(),
-//             mock_info(user, &[]),
-//             astroport_governance::outpost::ExecuteMsg::WithdrawHubFunds {},
-//         )
-//         .unwrap();
-
-//         // Build the expected message
-//         let ibc_message = to_binary(&Hub::WithdrawFunds {
-//             user: Addr::unchecked(user),
-//         })
-//         .unwrap();
-
-//         // We should only have 1 message
-//         assert_eq!(res.messages.len(), 1);
-
-//         // Ensure a withdrawal is emitted
-//         assert_eq!(
-//             res.messages[0],
-//             SubMsg {
-//                 id: 0,
-//                 gas_limit: None,
-//                 reply_on: ReplyOn::Never,
-//                 msg: IbcMsg::SendPacket {
-//                     channel_id: "channel-3".to_string(),
-//                     data: ibc_message,
-//                     timeout: env.block.time.plus_seconds(ibc_timeout_seconds).into(),
-//                 }
-//                 .into(),
-//             }
-//         );
-//     }
-// }

@@ -1,13 +1,15 @@
 use cosmwasm_schema::{cw_serde, QueryResponses};
 use cosmwasm_std::Uint128;
 
-use crate::types::Config;
+use crate::types::{Config, TokenMetadata, Verifier};
 
 /// Holds the parameters used for creating a Hub contract
 #[cw_serde]
 pub struct InstantiateMsg {
     /// The contract owner
     pub owner: String,
+    /// The threshold of signers needed to confirm a message
+    pub signer_threshold: u8,
     /// The IBC channel to the Cosmos Hub
     pub bridge_ibc_channel: String,
     /// The timeout in seconds for IBC packets
@@ -22,22 +24,23 @@ pub struct MigrateMsg {}
 /// Describes the execute messages available in the contract
 #[cw_serde]
 pub enum ExecuteMsg {
-    /// Enable a CFT-20 token to be bridged
+    /// Link a CFT-20 token to be bridged
+    LinkToken {
+        /// The metadata of the CFT-20 token
+        token: TokenMetadata,
+        /// The signatures of from the verifying parties
+        verifiers: Vec<Verifier>,
+    },
+    // Enable a previously disabled token to being bridged again
     EnableToken {
         /// The ticker of the CFT-20 token
         ticker: String,
-        /// The name of the CFT-20 token
-        name: String,
-        /// The URL to the CFT-20 token's image
-        image_url: String,
-        /// The amount of decimals this CFT-20 uses
-        decimals: u32,
     },
     // Disable a token from being bridged
-    // DisableToken {
-    //     /// The ticker of the CFT-20 token
-    //     ticker: String,
-    // },
+    DisableToken {
+        /// The ticker of the CFT-20 token
+        ticker: String,
+    },
     // /// Receive CFT-20 token message from the Hub
     // Receive {
     //     /// The ticker of the CFT-20 token
@@ -55,17 +58,34 @@ pub enum ExecuteMsg {
     //     // // TODO: Signature and checking data
     // },
     /// Adds a signer to the allowed list for signature verification
-    AddSigner { public_key: String, name: String },
+    AddSigner {
+        /// The public key in base64. This is the raw key without the ASN.1
+        /// structure, that is, the last 32 bytes from the DER-encoded public key
+        public_key_base64: String,
+        /// A simple human name for the owner of the public key
+        name: String,
+    },
     /// Remove a signer from the allowed list for signature verification
-    RemoveSigner { public_key: String },
+    RemoveSigner {
+        /// The public key in base64 to remove. This is the same key added using
+        /// AddSigner
+        public_key_base64: String,
+    },
     UpdateConfig {
+        /// The new threshold of signers needed to confirm a message
+        signer_threshold: Option<u8>,
         /// The new IBC channel to the Cosmos Hub to use
         bridge_ibc_channel: Option<String>,
         /// The timeout in seconds for IBC packets
         ibc_timeout_seconds: Option<u64>,
     },
     /// Propose a new owner for the contract
-    ProposeNewOwner { owner: String, expires_in: u64 },
+    ProposeNewOwner {
+        /// The owner being proposed
+        owner: String,
+        /// Time in seconds for the proposal to expire
+        expires_in: u64,
+    },
     /// Remove the ownership transfer proposal
     DropOwnershipProposal {},
     /// Claim contract ownership

@@ -8,10 +8,14 @@ pub const MIN_IBC_TIMEOUT_SECONDS: u64 = 5;
 // Maximum IBC timeout is 1 hour
 pub const MAX_IBC_TIMEOUT_SECONDS: u64 = 60 * 60;
 
+pub const FEE_DENOM: &str = "untrn";
+
 #[cw_serde]
 pub struct Config {
     /// The owner's address
     pub owner: Addr,
+    /// The threshold of signers needed to confirm a message
+    pub signer_threshold: u8,
     /// The channel used to communicate with the Hub
     pub bridge_ibc_channel: String,
     /// The timeout in seconds for IBC packets
@@ -28,6 +32,13 @@ pub struct TokenMetadata {
     pub image_url: String,
     /// The amount of decimals this CFT-20 uses
     pub decimals: u32,
+}
+
+/// The structure to hold verification information
+#[cw_serde]
+pub struct Verifier {
+    pub public_key_base64: String,
+    pub signature_base64: String,
 }
 
 /// These are messages in the IBC lifecycle. Only usable by IBC-enabled contracts

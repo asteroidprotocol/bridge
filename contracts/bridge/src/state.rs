@@ -11,12 +11,15 @@ pub const CONFIG: Item<Config> = Item::new("config");
 /// The public keys of the allowed signers of bridge messages used to confirm
 /// signature
 /// It holds <public key, name> to help identify specific keys
-pub const SIGNERS: Map<&str, String> = Map::new("signers");
+pub const SIGNERS: Map<&[u8], String> = Map::new("signers");
 
 // Token Mapping is kept in a map of
 // CFT-20 Ticker -> TokenFactory denom as well as the reverse
 // TokenFactory denom -> CFT-20 Ticker
 pub const TOKEN_MAPPING: Map<&str, String> = Map::new("token_mapping");
+
+/// Store the disabled tokens
+pub const DISABLED_TOKENS: Map<&str, bool> = Map::new("disabled_tokens");
 
 /// Store the token metadata when the denom is created via Reply
 pub const TOKEN_METADATA: Item<TokenMetadata> = Item::new("token_metadata");

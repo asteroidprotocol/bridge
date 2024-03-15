@@ -1,27 +1,29 @@
 use crate::msg::QueryMsg;
 use crate::state::CONFIG;
 
-use cosmwasm_crypto::ed25519_verify;
-use cosmwasm_std::{entry_point, to_json_binary, Binary, Deps, Env, StdResult};
-use data_encoding::BASE64;
+use base64::{engine::general_purpose, Engine as _};
+use cosmwasm_std::{entry_point, to_json_binary, Binary, Deps, DepsMut, Env, StdResult};
+use ed25519_dalek::{Signature, VerifyingKey, PUBLIC_KEY_LENGTH};
+use neutron_sdk::bindings::query::NeutronQuery;
 
 /// Expose available contract queries.
 ///
 /// ## Queries
 /// * **QueryMsg::Config {}** Returns the config of the Bridge
 #[cfg_attr(not(feature = "library"), entry_point)]
-pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> StdResult<Binary> {
+pub fn query(deps: Deps<NeutronQuery>, _env: Env, msg: QueryMsg) -> StdResult<Binary> {
     match msg {
         QueryMsg::Config {} => to_json_binary(&CONFIG.load(deps.storage)?),
         QueryMsg::TestVerifySignature {
             public_key_base64,
             signature_base64,
             attestation,
-        } => test_verify_signature(public_key_base64, signature_base64, attestation),
+        } => test_verify_signature(deps, public_key_base64, signature_base64, attestation),
     }
 }
 
 fn test_verify_signature(
+    deps: Deps<NeutronQuery>,
     public_key_base64: String,
     signature_base64: String,
     attestation: String,
@@ -29,29 +31,84 @@ fn test_verify_signature(
     let attestation_bytes = attestation.as_bytes();
 
     // Decode the base64 encoded signature
-    let signature = match BASE64.decode(signature_base64.as_bytes()) {
+    let signature = match general_purpose::STANDARD.decode(signature_base64.as_bytes()) {
         Ok(bytes) => bytes,
         Err(e) => panic!("Failed to decode signature: {}", e),
     };
 
     // Decode the base64 encoded public key
-    let public_key = match BASE64.decode(public_key_base64.as_bytes()) {
+    let public_key = match general_purpose::STANDARD.decode(public_key_base64.as_bytes()) {
         Ok(bytes) => bytes,
         Err(e) => panic!("Failed to decode public key: {}", e),
     };
 
+    // let public_key_bytes: [u8; PUBLIC_KEY_LENGTH] = public_key.try_into().unwrap();
+
+    // let verifying_key = VerifyingKey::from_bytes(&public_key_bytes).unwrap();
+
+    // let signature_bytes: [u8; 64] = signature.try_into().unwrap();
+
+    // let sig = Signature::from_bytes(&signature_bytes);
+
+    // // TODO Return proper error
+    // verifying_key
+    //     .verify_strict(attestation_bytes, &sig)
+    //     .unwrap();
+
+    // println!("Signature verified: {:?}", result);
+
     // Verify the signature
-    let res = ed25519_verify(attestation_bytes, &signature, &public_key).unwrap();
+    // let res = ed25519_verify(attestation_bytes, &signature, &public_key).unwrap();
+    let res = deps
+        .api
+        .ed25519_verify(attestation_bytes, &signature, &public_key)
+        .unwrap();
     to_json_binary(&res)
 }
 
 #[cfg(test)]
 mod tests {
 
+    use std::marker::PhantomData;
+
     use super::*;
 
-    use crate::{contract::instantiate, msg::InstantiateMsg, query::query};
-    use cosmwasm_std::testing::{mock_dependencies, mock_env, mock_info};
+    use crate::{contract::instantiate, msg::InstantiateMsg, query::query, types::FEE_DENOM};
+    use cosmwasm_std::{
+        coins, from_binary,
+        testing::{mock_env, mock_info, MockApi, MockQuerier, MockStorage},
+        to_binary, ContractResult, OwnedDeps, SystemResult,
+    };
+    use neutron_sdk::{
+        bindings::{msg::IbcFee, query::NeutronQuery},
+        query::min_ibc_fee::MinIbcFeeResponse,
+    };
+
+    fn mock_neutron_dependencies(
+    ) -> OwnedDeps<MockStorage, MockApi, MockQuerier<NeutronQuery>, NeutronQuery> {
+        let neutron_custom_handler = |request: &NeutronQuery| {
+            let contract_result: ContractResult<_> = match request {
+                NeutronQuery::MinIbcFee {} => to_binary(&MinIbcFeeResponse {
+                    min_fee: IbcFee {
+                        recv_fee: vec![],
+                        ack_fee: coins(10000, FEE_DENOM),
+                        timeout_fee: coins(10000, FEE_DENOM),
+                    },
+                })
+                .into(),
+                _ => unimplemented!("Unsupported query request: {:?}", request),
+            };
+            SystemResult::Ok(contract_result)
+        };
+
+        OwnedDeps {
+            storage: MockStorage::default(),
+            api: MockApi::default(),
+            querier: MockQuerier::new(&[]).with_custom_handler(neutron_custom_handler),
+            custom_query_type: PhantomData,
+        }
+    }
+
     // Test Cases:
     //
     // Expect Success
@@ -60,7 +117,7 @@ mod tests {
     fn query_test_signature() {
         // let (mut deps, env, info) = mock_all(OWNER);
 
-        let mut deps = mock_dependencies();
+        let mut deps = mock_neutron_dependencies();
         let info = mock_info(&String::from("anyone"), &[]);
         let env = mock_env();
 
@@ -74,6 +131,7 @@ mod tests {
             info,
             InstantiateMsg {
                 owner: owner.to_string(),
+                signer_threshold: 1,
                 bridge_ibc_channel: bridge_ibc_channel.to_string(),
                 ibc_timeout_seconds,
             },

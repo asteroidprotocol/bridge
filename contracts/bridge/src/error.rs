@@ -29,6 +29,12 @@ pub enum ContractError {
     #[error("The public key is not loaded")]
     KeyNotLoaded {},
 
+    #[error("The public key provided is not a verifier: {public_key_base64}")]
+    VerifierNotLoaded { public_key_base64: String },
+
+    #[error("This token has been disabled from bridging: {ticker}")]
+    TokenDisabled { ticker: String },
+
     #[error("You can not send 0 CFT-20 tokens")]
     ZeroAmount {},
 

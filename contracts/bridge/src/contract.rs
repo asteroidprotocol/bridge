@@ -1,5 +1,7 @@
 use cosmwasm_std::{entry_point, DepsMut, Env, MessageInfo, Response};
 use cw2::set_contract_version;
+use neutron_sdk::bindings::msg::NeutronMsg;
+use neutron_sdk::bindings::query::NeutronQuery;
 
 use crate::error::ContractError;
 use crate::msg::{InstantiateMsg, MigrateMsg};
@@ -15,11 +17,11 @@ const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Returns a `Response` object on successful execution or a `ContractError` on failure.
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
-    deps: DepsMut,
+    deps: DepsMut<NeutronQuery>,
     _env: Env,
     _info: MessageInfo,
     msg: InstantiateMsg,
-) -> Result<Response, ContractError> {
+) -> Result<Response<NeutronMsg>, ContractError> {
     set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
 
     if !(MIN_IBC_TIMEOUT_SECONDS..=MAX_IBC_TIMEOUT_SECONDS).contains(&msg.ibc_timeout_seconds) {
@@ -34,6 +36,7 @@ pub fn instantiate(
 
     let config = Config {
         owner: deps.api.addr_validate(&msg.owner)?,
+        signer_threshold: msg.signer_threshold,
         bridge_ibc_channel: msg.bridge_ibc_channel,
         ibc_timeout_seconds: msg.ibc_timeout_seconds,
     };
