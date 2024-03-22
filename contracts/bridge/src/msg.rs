@@ -1,7 +1,7 @@
 use cosmwasm_schema::{cw_serde, QueryResponses};
 use cosmwasm_std::Uint128;
 
-use crate::types::{Config, TokenMetadata, Verifier};
+use crate::types::{Config, QuerySignersResponse, QueryTokensResponse, TokenMetadata, Verifier};
 
 /// Holds the parameters used for creating a Hub contract
 #[cw_serde]
@@ -24,7 +24,7 @@ pub struct MigrateMsg {}
 /// Describes the execute messages available in the contract
 #[cw_serde]
 pub enum ExecuteMsg {
-    /// Link a CFT-20 token to be bridged
+    /// Link and enable a CFT-20 token to be bridged
     LinkToken {
         /// The metadata of the CFT-20 token
         token: TokenMetadata,
@@ -41,16 +41,21 @@ pub enum ExecuteMsg {
         /// The ticker of the CFT-20 token
         ticker: String,
     },
-    // /// Receive CFT-20 token message from the Hub
-    // Receive {
-    //     /// The ticker of the CFT-20 token
-    //     ticker: String,
-    //     /// The amount of CFT-20 tokens
-    //     amount: Uint128,
-    //     /// The destination address to transfer the CFT-20-equivalent to
-    //     destination_addr: String,
-    //     // // TODO: Signature and checking data
-    // },
+    /// Receive CFT-20 token message from the Hub
+    Receive {
+        /// The chain ID of the source chain
+        source_chain_id: String,
+        /// The hash of the transaction on the origin chain
+        transaction_hash: String,
+        /// The ticker of the CFT-20 token
+        ticker: String,
+        /// The amount of CFT-20 tokens
+        amount: Uint128,
+        /// The destination address to transfer the CFT-20-equivalent to
+        destination_addr: String,
+        /// The signatures of from the verifying parties
+        verifiers: Vec<Verifier>,
+    },
     // /// Send CFT-20 token back to the Hub
     // Send {
     //     /// The destination address to transfer the CFT-20-equivalent to
@@ -105,8 +110,20 @@ pub enum QueryMsg {
         public_key_base64: String,
         signature_base64: String,
         attestation: String,
-    }, // /// Returns the allowed signers for signature verification
-       // Signers {},
-       // /// Returns all the tokens that have been enabled for bridging
-       // Tokens {},
+    },
+    /// Returns the allowed signers for signature verification
+    #[returns(QuerySignersResponse)]
+    Signers {},
+    /// Returns all the tokens that have been added to the bridge
+    #[returns(QueryTokensResponse)]
+    Tokens {
+        start_after: Option<String>,
+        limit: Option<u32>,
+    },
+    /// Returns the disabled tokens
+    #[returns(QueryTokensResponse)]
+    DisabledTokens {
+        start_after: Option<String>,
+        limit: Option<u32>,
+    },
 }

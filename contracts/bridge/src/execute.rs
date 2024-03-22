@@ -17,6 +17,7 @@ use crate::state::{DISABLED_TOKENS, OWNERSHIP_PROPOSAL, SIGNERS, TOKEN_MAPPING, 
 use crate::types::{
     Config, CustomIbcMsg, TokenMetadata, Verifier, MAX_IBC_TIMEOUT_SECONDS, MIN_IBC_TIMEOUT_SECONDS,
 };
+use crate::verifier::verify_signatures;
 use crate::{error::ContractError, state::CONFIG};
 
 use neutron_sdk::bindings::msg::{IbcFee, NeutronMsg};
@@ -67,11 +68,24 @@ pub fn execute(
         ExecuteMsg::LinkToken { token, verifiers } => link_token(deps, env, info, token, verifiers),
         ExecuteMsg::EnableToken { ticker } => enable_token(deps, env, info, ticker),
         ExecuteMsg::DisableToken { ticker } => disable_token(deps, env, info, ticker),
-        // ExecuteMsg::Receive {
-        //     ticker,
-        //     amount,
-        //     destination_addr,
-        // } => bridge_receive(deps, env, info, ticker, amount, destination_addr),
+        ExecuteMsg::Receive {
+            source_chain_id,
+            transaction_hash,
+            ticker,
+            amount,
+            destination_addr,
+            verifiers,
+        } => bridge_receive(
+            deps,
+            env,
+            info,
+            source_chain_id,
+            transaction_hash,
+            ticker,
+            amount,
+            destination_addr,
+            verifiers,
+        ),
         // ExecuteMsg::Send { destination_addr } => bridge_send(deps, env, info, destination_addr),
         ExecuteMsg::AddSigner {
             public_key_base64,
@@ -137,7 +151,7 @@ pub fn execute(
 fn link_token(
     deps: DepsMut<NeutronQuery>,
     env: Env,
-    info: MessageInfo,
+    _info: MessageInfo,
     token: TokenMetadata,
     verifiers: Vec<Verifier>,
 ) -> Result<Response<NeutronMsg>, ContractError> {
@@ -148,20 +162,13 @@ fn link_token(
         });
     }
 
-    if verifiers.is_empty() {
-        return Err(ContractError::Unauthorized {});
-    }
+    // // TODO: Linking a token hasn't been implemented yet
+    // // TODO: Build the message to verify
+    // let message = b"";
 
-    // Check if all the verifier public keys are in SIGNERS
-    for verifier in verifiers {
-        if !SIGNERS.has(deps.storage, &verifier.public_key_base64.as_bytes()) {
-            return Err(ContractError::VerifierNotLoaded {
-                public_key_base64: verifier.public_key_base64,
-            });
-        }
-    }
-
-    // TODO: Verify that the threshold is met by verifying the provided signatures
+    // // Verify the message with the current loaded keys
+    // verify_signatures(deps.as_ref(), message, &verifiers)?;
+    // // At this point everything has been verified and we may continue
 
     // If not, create the denom and set the metadata
     let create_denom_msg = SubMsg::reply_on_success(
@@ -279,22 +286,22 @@ pub fn reply(deps: DepsMut, env: Env, msg: Reply) -> Result<Response, ContractEr
     }
 }
 
+// TODO: Clear up args
 fn bridge_receive(
     deps: DepsMut<NeutronQuery>,
     env: Env,
     info: MessageInfo,
+    source_chain_id: String,
+    transaction_hash: String,
     ticker: String,
     amount: Uint128,
     destination_addr: String,
+    verifiers: Vec<Verifier>,
 ) -> Result<Response<NeutronMsg>, ContractError> {
-    // TODO
-    // On receive, check if the signature for this tranfer is valid, if not, reject
-
     // Check if the token is disabled
-    if DISABLED_TOKENS.load(deps.storage, &ticker)? {
+    if DISABLED_TOKENS.has(deps.storage, &ticker) {
         return Err(ContractError::TokenDisabled { ticker });
     }
-
     // Check the amount sent, if 0, reject
     if amount.is_zero() {
         return Err(ContractError::ZeroAmount {});
@@ -303,11 +310,25 @@ fn bridge_receive(
     if deps.api.addr_validate(&destination_addr).is_err() {
         return Err(ContractError::InvalidDestinationAddr {});
     }
-
     // Check the ticker, if it doesn't exist activate needs to be called first
     if !TOKEN_MAPPING.has(deps.storage, &ticker) {
         return Err(ContractError::TokenDoesNotExist { ticker });
     }
+
+    // Build the attestation message
+    let attestation = format!(
+        // source_chain_id, transaction_hash, ticker, amount
+        "{}{}{}{}{}{}{}",
+        source_chain_id,
+        transaction_hash,
+        ticker,
+        amount,
+        env.block.chain_id,
+        env.contract.address,
+        destination_addr
+    );
+
+    verify_signatures(deps.as_ref(), attestation.as_bytes(), &verifiers)?;
 
     let tokenfactory_denom = TOKEN_MAPPING.load(deps.storage, &ticker)?;
 
@@ -349,7 +370,7 @@ fn bridge_send(
     let cft20_denom = TOKEN_MAPPING.load(deps.storage, &bridging_coin.denom)?;
 
     // Check if the token is disabled
-    if DISABLED_TOKENS.load(deps.storage, &cft20_denom)? {
+    if DISABLED_TOKENS.has(deps.storage, &cft20_denom) {
         return Err(ContractError::TokenDisabled {
             ticker: cft20_denom,
         });

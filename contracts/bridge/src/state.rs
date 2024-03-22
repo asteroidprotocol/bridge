@@ -7,9 +7,8 @@ use astroport::common::OwnershipProposal;
 /// Store the contract config
 pub const CONFIG: Item<Config> = Item::new("config");
 
-// TODO: The public key should be stored as u8 to avoid decoding it the whole time, we can always convert to b64 on query/checks
 /// The public keys of the allowed signers of bridge messages used to confirm
-/// signature
+/// signature. The public key is stored in the format required during bridging
 /// It holds <public key, name> to help identify specific keys
 pub const SIGNERS: Map<&[u8], String> = Map::new("signers");
 

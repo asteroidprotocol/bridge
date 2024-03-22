@@ -41,6 +41,16 @@ pub struct Verifier {
     pub signature_base64: String,
 }
 
+#[cw_serde]
+pub struct QuerySignersResponse {
+    pub signers: Vec<(String, String)>,
+}
+
+#[cw_serde]
+pub struct QueryTokensResponse {
+    pub tokens: Vec<String>,
+}
+
 /// These are messages in the IBC lifecycle. Only usable by IBC-enabled contracts
 /// (contracts that directly speak the IBC protocol via 6 entry points)
 #[non_exhaustive]

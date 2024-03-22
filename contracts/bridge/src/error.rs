@@ -1,4 +1,5 @@
-use cosmwasm_std::{OverflowError, StdError};
+use base64::DecodeError;
+use cosmwasm_std::{OverflowError, StdError, VerificationError};
 use cw_utils::PaymentError;
 use thiserror::Error;
 
@@ -32,6 +33,12 @@ pub enum ContractError {
     #[error("The public key provided is not a verifier: {public_key_base64}")]
     VerifierNotLoaded { public_key_base64: String },
 
+    #[error("Insufficient valid signatures to confirm the message")]
+    ThresholdNotMet {},
+
+    #[error("No signers have been loaded or provided by the caller")]
+    NoSigners {},
+
     #[error("This token has been disabled from bridging: {ticker}")]
     TokenDisabled { ticker: String },
 
@@ -54,5 +61,21 @@ pub enum ContractError {
 impl From<OverflowError> for ContractError {
     fn from(o: OverflowError) -> Self {
         StdError::from(o).into()
+    }
+}
+
+impl From<VerificationError> for ContractError {
+    fn from(v: VerificationError) -> Self {
+        StdError::from(v).into()
+    }
+}
+
+impl From<base64::DecodeError> for ContractError {
+    fn from(error: base64::DecodeError) -> Self {
+        // Convert the base64::DecodeError to a generic StdError
+        let std_error = StdError::generic_err(format!("Base64 decode error: {}", error));
+
+        // Utilize the existing conversion from StdError to ContractError
+        ContractError::from(std_error)
     }
 }
