@@ -42,6 +42,9 @@ pub enum ContractError {
     #[error("This token has been disabled from bridging: {ticker}")]
     TokenDisabled { ticker: String },
 
+    #[error("The transaction has already been handled: {transaction_hash}")]
+    TransactionAlreadyHandled { transaction_hash: String },
+
     #[error("You can not send 0 CFT-20 tokens")]
     ZeroAmount {},
 

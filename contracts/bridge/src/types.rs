@@ -16,6 +16,8 @@ pub struct Config {
     pub owner: Addr,
     /// The threshold of signers needed to confirm a message
     pub signer_threshold: u8,
+    /// The chain ID this bridge is connected to
+    pub bridge_chain_id: String,
     /// The channel used to communicate with the Hub
     pub bridge_ibc_channel: String,
     /// The timeout in seconds for IBC packets

@@ -37,6 +37,7 @@ pub fn instantiate(
     let config = Config {
         owner: deps.api.addr_validate(&msg.owner)?,
         signer_threshold: msg.signer_threshold,
+        bridge_chain_id: msg.bridge_chain_id,
         bridge_ibc_channel: msg.bridge_ibc_channel,
         ibc_timeout_seconds: msg.ibc_timeout_seconds,
     };

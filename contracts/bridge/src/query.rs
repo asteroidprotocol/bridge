@@ -208,6 +208,7 @@ mod tests {
         let owner = "owner";
         let ibc_timeout_seconds = 10u64;
         let bridge_ibc_channel = "channel-0";
+        let bridge_chain_id = "gaia-1";
 
         instantiate(
             deps.as_mut(),
@@ -216,6 +217,7 @@ mod tests {
             InstantiateMsg {
                 owner: owner.to_string(),
                 signer_threshold: 1,
+                bridge_chain_id: bridge_chain_id.to_string(),
                 bridge_ibc_channel: bridge_ibc_channel.to_string(),
                 ibc_timeout_seconds,
             },

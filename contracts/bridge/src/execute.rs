@@ -13,7 +13,10 @@ use osmosis_std::types::cosmos::bank::v1beta1::{DenomUnit, Metadata};
 use osmosis_std::types::cosmos::crypto::ed25519;
 
 use crate::msg::ExecuteMsg;
-use crate::state::{DISABLED_TOKENS, OWNERSHIP_PROPOSAL, SIGNERS, TOKEN_MAPPING, TOKEN_METADATA};
+use crate::state::{
+    DISABLED_TOKENS, HANDLED_TRANSACTIONS, OWNERSHIP_PROPOSAL, SIGNERS, TOKEN_MAPPING,
+    TOKEN_METADATA,
+};
 use crate::types::{
     Config, CustomIbcMsg, TokenMetadata, Verifier, MAX_IBC_TIMEOUT_SECONDS, MIN_IBC_TIMEOUT_SECONDS,
 };
@@ -86,7 +89,7 @@ pub fn execute(
             destination_addr,
             verifiers,
         ),
-        // ExecuteMsg::Send { destination_addr } => bridge_send(deps, env, info, destination_addr),
+        ExecuteMsg::Send { destination_addr } => bridge_send(deps, env, info, destination_addr),
         ExecuteMsg::AddSigner {
             public_key_base64,
             name,
@@ -314,6 +317,12 @@ fn bridge_receive(
     if !TOKEN_MAPPING.has(deps.storage, &ticker) {
         return Err(ContractError::TokenDoesNotExist { ticker });
     }
+    // Check if we've processed this transaction already
+    if HANDLED_TRANSACTIONS.has(deps.storage, &transaction_hash) {
+        return Err(ContractError::TransactionAlreadyHandled { transaction_hash });
+    }
+    // Store the transaction hash to prevent replay attacks
+    HANDLED_TRANSACTIONS.save(deps.storage, &transaction_hash, &true)?;
 
     // Build the attestation message
     let attestation = format!(
@@ -360,8 +369,7 @@ fn bridge_send(
     info: MessageInfo,
     destination_addr: String,
 ) -> Result<Response<NeutronMsg>, ContractError> {
-    // Check the tokens sent, map back to CFT-20 tokens
-    // Send IBC message with token destination
+    let config = CONFIG.load(deps.storage)?;
 
     // Only a single coin is allowed to be sent
     let bridging_coin = one_coin(&info)?;
@@ -377,12 +385,22 @@ fn bridge_send(
     }
 
     // Contruct the IBC memo message to return X of denom on the Hub
+    // urn:bridge:gaialocal-1@v1;recv$tic=LOCALROIDS,amt=1,dst=cosmos1234,rch=neutronlocal-1,src=neutron1m857lgtjssgt0wm3crzfmt3v950vqnkqy4vep9
+    let memo = format!(
+        "urn:bridge:{}@v1;recv$tic={},amt={},dst={},rch={},src={}",
+        config.bridge_chain_id,
+        cft20_denom,
+        bridging_coin.amount,
+        destination_addr,
+        env.block.chain_id,
+        info.sender
+    );
 
     // Also burn the tokens
     let burn_msg = MsgBurn {
         sender: env.contract.address.to_string(),
         burn_from_address: env.contract.address.to_string(),
-        amount: Some(bridging_coin.clone().into()),
+        amount: Some(bridging_coin.into()),
     };
 
     // Set timeout, 10 minutes
@@ -394,23 +412,9 @@ fn bridge_send(
             .min_fee,
     );
 
-    // CosmosMsg::Ibc(IbcMsg::Transfer { channel_id: (), to_address: (), amount: (), timeout: () })
-
-    // osmosis_std::types::ibc::applications::transfer::v1::MsgTransfer {
-
-    // }
-
-    // let ibc_transfer = IbcMsg::Transfer {
-    //     channel_id: "channel-0".to_string(),
-    //     to_address: "cosmos1_bridge".to_string(),
-    //     amount: coin(1u128, "untrn"),
-    //     timeout: IbcTimeout::with_timestamp(ibc_timeout_timestamp),
-    //     // memo: Some("burn".to_string()),
-    // };
-
     let ibc_transfer = NeutronMsg::IbcTransfer {
         source_port: "transfer".to_string(),
-        source_channel: "channel-0".to_string(),
+        source_channel: config.bridge_ibc_channel,
         sender: env.contract.address.to_string(),
         receiver: destination_addr,
         token: coin(1u128, "untrn"),
@@ -421,14 +425,14 @@ fn bridge_send(
         // Neutron expects nanoseconds
         // https://github.com/neutron-org/neutron/blob/303d764b57d871749fcf7d59a67b5d3078779258/proto/transfer/v1/tx.proto#L39-L42
         timeout_timestamp: ibc_timeout_timestamp.nanos(),
-        memo: format!("mint {} token {}", bridging_coin.amount, cft20_denom),
+        memo,
         fee: fee.clone(),
     };
 
     let response = Response::new()
         .add_message(burn_msg)
         .add_message(ibc_transfer)
-        .add_attribute("bridge_send", "something?")
+        .add_attribute("bridge_send", "log some values")
         .add_attribute("fee", format!("{:?}", fee));
 
     Ok(response)

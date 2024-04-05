@@ -10,6 +10,8 @@ pub struct InstantiateMsg {
     pub owner: String,
     /// The threshold of signers needed to confirm a message
     pub signer_threshold: u8,
+    /// The chain ID this bridge is connected to
+    pub bridge_chain_id: String,
     /// The IBC channel to the Cosmos Hub
     pub bridge_ibc_channel: String,
     /// The timeout in seconds for IBC packets
@@ -56,12 +58,11 @@ pub enum ExecuteMsg {
         /// The signatures of from the verifying parties
         verifiers: Vec<Verifier>,
     },
-    // /// Send CFT-20 token back to the Hub
-    // Send {
-    //     /// The destination address to transfer the CFT-20-equivalent to
-    //     destination_addr: String,
-    //     // // TODO: Signature and checking data
-    // },
+    /// Send CFT-20 token back to the Hub
+    Send {
+        /// The destination address to transfer the CFT-20-equivalent to
+        destination_addr: String,
+    },
     /// Adds a signer to the allowed list for signature verification
     AddSigner {
         /// The public key in base64. This is the raw key without the ASN.1
