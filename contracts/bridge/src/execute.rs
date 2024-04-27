@@ -1,8 +1,6 @@
 use astroport::common::{claim_ownership, drop_ownership_proposal, propose_new_owner};
 use base64::{engine::general_purpose, Engine as _};
-use cosmwasm_std::{
-    coin, entry_point, BankMsg, CosmosMsg, IbcMsg, IbcTimeout, Reply, StdError, SubMsg, Uint128,
-};
+use cosmwasm_std::{coin, entry_point, BankMsg, Reply, StdError, SubMsg, Uint128};
 use cosmwasm_std::{DepsMut, Env, MessageInfo, Response};
 use cw_utils::one_coin;
 use ed25519_dalek::{VerifyingKey, PUBLIC_KEY_LENGTH};
@@ -10,7 +8,6 @@ use neutron_sdk::bindings::query::NeutronQuery;
 use neutron_sdk::query::min_ibc_fee::query_min_ibc_fee;
 use neutron_sdk::sudo::msg::RequestPacketTimeoutHeight;
 use osmosis_std::types::cosmos::bank::v1beta1::{DenomUnit, Metadata};
-use osmosis_std::types::cosmos::crypto::ed25519;
 
 use crate::msg::ExecuteMsg;
 use crate::state::{
@@ -18,7 +15,7 @@ use crate::state::{
     TOKEN_METADATA,
 };
 use crate::types::{
-    Config, CustomIbcMsg, TokenMetadata, Verifier, MAX_IBC_TIMEOUT_SECONDS, MIN_IBC_TIMEOUT_SECONDS,
+    Config, TokenMetadata, Verifier, MAX_IBC_TIMEOUT_SECONDS, MIN_IBC_TIMEOUT_SECONDS,
 };
 use crate::verifier::verify_signatures;
 use crate::{error::ContractError, state::CONFIG};
@@ -26,8 +23,7 @@ use crate::{error::ContractError, state::CONFIG};
 use neutron_sdk::bindings::msg::{IbcFee, NeutronMsg};
 
 use osmosis_std::types::osmosis::tokenfactory::v1beta1::{
-    MsgBurn, MsgCreateDenom, MsgCreateDenomResponse, MsgMint, MsgSetBeforeSendHook,
-    MsgSetDenomMetadata,
+    MsgBurn, MsgCreateDenom, MsgCreateDenomResponse, MsgMint, MsgSetDenomMetadata,
 };
 
 /// This contract accepts only one fee denom
@@ -68,7 +64,11 @@ pub fn execute(
     msg: ExecuteMsg,
 ) -> Result<Response<NeutronMsg>, ContractError> {
     match msg {
-        ExecuteMsg::LinkToken { token, verifiers } => link_token(deps, env, info, token, verifiers),
+        ExecuteMsg::LinkToken {
+            source_chain_id,
+            token,
+            verifiers,
+        } => link_token(deps, env, source_chain_id, token, verifiers),
         ExecuteMsg::EnableToken { ticker } => enable_token(deps, env, info, ticker),
         ExecuteMsg::DisableToken { ticker } => disable_token(deps, env, info, ticker),
         ExecuteMsg::Receive {
@@ -81,7 +81,6 @@ pub fn execute(
         } => bridge_receive(
             deps,
             env,
-            info,
             source_chain_id,
             transaction_hash,
             ticker,
@@ -154,7 +153,7 @@ pub fn execute(
 fn link_token(
     deps: DepsMut<NeutronQuery>,
     env: Env,
-    _info: MessageInfo,
+    source_chain_id: String,
     token: TokenMetadata,
     verifiers: Vec<Verifier>,
 ) -> Result<Response<NeutronMsg>, ContractError> {
@@ -169,9 +168,15 @@ fn link_token(
     // // TODO: Build the message to verify
     // let message = b"";
 
-    // // Verify the message with the current loaded keys
-    // verify_signatures(deps.as_ref(), message, &verifiers)?;
-    // // At this point everything has been verified and we may continue
+    // Build the attestation message to verify the token information
+    // cosmoshub-4ticker8neutron-1neutron1xxxxx
+    let attestation = format!(
+        "{}{}{}{}{}",
+        source_chain_id, token.ticker, token.decimals, env.block.chain_id, env.contract.address
+    );
+
+    // Verify with current keys
+    verify_signatures(deps.as_ref(), attestation.as_bytes(), &verifiers)?;
 
     // If not, create the denom and set the metadata
     let create_denom_msg = SubMsg::reply_on_success(
@@ -293,7 +298,6 @@ pub fn reply(deps: DepsMut, env: Env, msg: Reply) -> Result<Response, ContractEr
 fn bridge_receive(
     deps: DepsMut<NeutronQuery>,
     env: Env,
-    info: MessageInfo,
     source_chain_id: String,
     transaction_hash: String,
     ticker: String,
@@ -415,7 +419,9 @@ fn bridge_send(
     let ibc_transfer = NeutronMsg::IbcTransfer {
         source_port: "transfer".to_string(),
         source_channel: config.bridge_ibc_channel,
-        sender: env.contract.address.to_string(),
+        // sender: env.contract.address.to_string(),
+        // TODO: Note toi auditor, please also confirm that this sender address can't be spoofed on the Hub's side
+        sender: "neutron1h2rhl4kj3cgedqqxfvjp7zlkf42al3t6dcahvf".to_string(),
         receiver: destination_addr,
         token: coin(1u128, "untrn"),
         timeout_height: RequestPacketTimeoutHeight {

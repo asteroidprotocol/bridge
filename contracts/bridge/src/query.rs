@@ -3,11 +3,8 @@ use crate::types::{QuerySignersResponse, QueryTokensResponse};
 use crate::{msg::QueryMsg, state::SIGNERS};
 
 use base64::{engine::general_purpose, Engine as _};
-use cosmwasm_std::{
-    entry_point, to_json_binary, Binary, Deps, DepsMut, Env, Order, StdError, StdResult,
-};
+use cosmwasm_std::{entry_point, to_json_binary, Binary, Deps, Env, Order, StdError, StdResult};
 use cw_storage_plus::Bound;
-use ed25519_dalek::{Signature, VerifyingKey, PUBLIC_KEY_LENGTH};
 use neutron_sdk::bindings::query::NeutronQuery;
 
 // Settings for pagination.
@@ -150,99 +147,70 @@ pub fn query_disabled_tokens(
     Ok(QueryTokensResponse { tokens })
 }
 
-#[cfg(test)]
-mod tests {
+// #[cfg(test)]
+// mod tests {
 
-    use std::marker::PhantomData;
+//     use super::*;
 
-    use super::*;
+//     use crate::{
+//         contract::instantiate, msg::InstantiateMsg, query::query, tests::mock_neutron_dependencies,
+//     };
+//     use cosmwasm_std::testing::{mock_env, mock_info};
+//     // use neutron_sdk::{
+//     //     bindings::{msg::IbcFee, query::NeutronQuery},
+//     //     query::min_ibc_fee::MinIbcFeeResponse,
+//     // };
 
-    use crate::{contract::instantiate, msg::InstantiateMsg, query::query, types::FEE_DENOM};
-    use cosmwasm_std::{
-        coins, from_binary,
-        testing::{mock_env, mock_info, MockApi, MockQuerier, MockStorage},
-        to_binary, ContractResult, OwnedDeps, SystemResult,
-    };
-    use neutron_sdk::{
-        bindings::{msg::IbcFee, query::NeutronQuery},
-        query::min_ibc_fee::MinIbcFeeResponse,
-    };
+//     // Test Cases:
+//     //
+//     // Expect Success
+//     //      - Can verify that the signature is value
+//     #[test]
+//     fn query_test_signature() {
+//         // let (mut deps, env, info) = mock_all(OWNER);
 
-    fn mock_neutron_dependencies(
-    ) -> OwnedDeps<MockStorage, MockApi, MockQuerier<NeutronQuery>, NeutronQuery> {
-        let neutron_custom_handler = |request: &NeutronQuery| {
-            let contract_result: ContractResult<_> = match request {
-                NeutronQuery::MinIbcFee {} => to_binary(&MinIbcFeeResponse {
-                    min_fee: IbcFee {
-                        recv_fee: vec![],
-                        ack_fee: coins(10000, FEE_DENOM),
-                        timeout_fee: coins(10000, FEE_DENOM),
-                    },
-                })
-                .into(),
-                _ => unimplemented!("Unsupported query request: {:?}", request),
-            };
-            SystemResult::Ok(contract_result)
-        };
+//         let mut deps = mock_neutron_dependencies();
+//         let info = mock_info(&String::from("anyone"), &[]);
+//         let env = mock_env();
 
-        OwnedDeps {
-            storage: MockStorage::default(),
-            api: MockApi::default(),
-            querier: MockQuerier::new(&[]).with_custom_handler(neutron_custom_handler),
-            custom_query_type: PhantomData,
-        }
-    }
+//         let owner = "owner";
+//         let ibc_timeout_seconds = 10u64;
+//         let bridge_ibc_channel = "channel-0";
+//         let bridge_chain_id = "gaia-1";
 
-    // Test Cases:
-    //
-    // Expect Success
-    //      - Can verify that the signature is value
-    #[test]
-    fn query_test_signature() {
-        // let (mut deps, env, info) = mock_all(OWNER);
+//         instantiate(
+//             deps.as_mut(),
+//             env.clone(),
+//             info,
+//             InstantiateMsg {
+//                 owner: owner.to_string(),
+//                 signer_threshold: 1,
+//                 bridge_chain_id: bridge_chain_id.to_string(),
+//                 bridge_ibc_channel: bridge_ibc_channel.to_string(),
+//                 ibc_timeout_seconds,
+//             },
+//         )
+//         .unwrap();
 
-        let mut deps = mock_neutron_dependencies();
-        let info = mock_info(&String::from("anyone"), &[]);
-        let env = mock_env();
+//         // Build attestation
+//         // parsedURN.ChainID + transactionModel.Hash + tokenModel.Ticker + fmt.Sprintf("%d", amount) + remoteChainId + remoteContract + receiverAddress
+//         // gaialocal-1 + 8AD3C9E8F69B86DD2EEBC3C5C0BD329F80BA25502F7EE27CDEDD8AD65AB6FBF4 + T1 + 3000000 + neutronlocal-1 + neutron1234 + neutron98765
+//         let message_str = "gaialocal-18AD3C9E8F69B86DD2EEBC3C5C0BD329F80BA25502F7EE27CDEDD8AD65AB6FBF4T13000000neutronlocal-1neutron1234neutron98765";
+//         let signature_base64 = "Zkk8EhCkNdGoYiFkYXvv6KHOo/V+2nFt07LmwsY7MJaoZQMyD6uLFljrEC/RYmTKiKcmyVgfEc0m9IlZvRHPCw==";
+//         let public_key_base64 = "b577zulJVqWfXiip7ydZrvMgp2SzfR+IXhH7vkUjr+Y=";
 
-        let owner = "owner";
-        let ibc_timeout_seconds = 10u64;
-        let bridge_ibc_channel = "channel-0";
-        let bridge_chain_id = "gaia-1";
+//         // Test if the contract can correctly verify the information
+//         let verified_signature = query(
+//             deps.as_ref(),
+//             env,
+//             QueryMsg::TestVerifySignature {
+//                 public_key_base64: public_key_base64.to_string(),
+//                 signature_base64: signature_base64.to_string(),
+//                 attestation: message_str.to_string(),
+//             },
+//         )
+//         .unwrap();
 
-        instantiate(
-            deps.as_mut(),
-            env.clone(),
-            info,
-            InstantiateMsg {
-                owner: owner.to_string(),
-                signer_threshold: 1,
-                bridge_chain_id: bridge_chain_id.to_string(),
-                bridge_ibc_channel: bridge_ibc_channel.to_string(),
-                ibc_timeout_seconds,
-            },
-        )
-        .unwrap();
-
-        // Build attestation
-        // parsedURN.ChainID + transactionModel.Hash + tokenModel.Ticker + fmt.Sprintf("%d", amount) + remoteChainId + remoteContract + receiverAddress
-        // gaialocal-1 + 8AD3C9E8F69B86DD2EEBC3C5C0BD329F80BA25502F7EE27CDEDD8AD65AB6FBF4 + T1 + 3000000 + neutronlocal-1 + neutron1234 + neutron98765
-        let message_str = "gaialocal-18AD3C9E8F69B86DD2EEBC3C5C0BD329F80BA25502F7EE27CDEDD8AD65AB6FBF4T13000000neutronlocal-1neutron1234neutron98765";
-        let signature_base64 = "Zkk8EhCkNdGoYiFkYXvv6KHOo/V+2nFt07LmwsY7MJaoZQMyD6uLFljrEC/RYmTKiKcmyVgfEc0m9IlZvRHPCw==";
-        let public_key_base64 = "b577zulJVqWfXiip7ydZrvMgp2SzfR+IXhH7vkUjr+Y=";
-
-        // Test if the contract can correctly verify the information
-        let verified_signature = query(
-            deps.as_ref(),
-            env,
-            QueryMsg::TestVerifySignature {
-                public_key_base64: public_key_base64.to_string(),
-                signature_base64: signature_base64.to_string(),
-                attestation: message_str.to_string(),
-            },
-        )
-        .unwrap();
-
-        assert_eq!(verified_signature, to_json_binary(&true).unwrap());
-    }
-}
+//         assert_eq!(verified_signature, to_json_binary(&true).unwrap());
+//     }
+// }

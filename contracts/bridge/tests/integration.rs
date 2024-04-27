@@ -1,17 +1,7 @@
-use std::cell::RefCell;
-use std::fmt::Debug;
-use std::rc::Rc;
-
 use asteroid_bridge::contract::instantiate;
 use asteroid_bridge::execute::execute;
 use asteroid_bridge::msg::InstantiateMsg;
-use asteroid_bridge::query::query;
-use cosmwasm_schema::schemars::JsonSchema;
-use cosmwasm_schema::serde::Deserialize;
-use cosmwasm_std::{
-    from_slice, wasm_execute, Addr, Binary, Coin, CustomQuery, Deps, DepsMut, Empty, Env,
-    MessageInfo, Response, StdResult, WasmMsg,
-};
+use cosmwasm_std::{Addr, Binary, Coin, CustomQuery, Deps, Empty, Env, StdResult};
 use cw_multi_test::{
     AppBuilder, BasicApp, Contract, ContractWrapper, Executor, FailingModule, WasmKeeper,
 };
@@ -42,7 +32,6 @@ where
 {
     Ok(Default::default())
 }
-
 #[test]
 fn test_add_signer() {
     let owner = Addr::unchecked("owner");
@@ -56,8 +45,9 @@ fn test_add_signer() {
             &InstantiateMsg {
                 owner: owner.to_string(),
                 signer_threshold: 1,
-                bridge_ibc_channel: "channel-0".to_string(),
                 ibc_timeout_seconds: 10,
+                bridge_ibc_channel: "channel-0".to_string(),
+                bridge_chain_id: "localgaia-1".to_string(),
             },
             &[],
             "Asteroid Bridge",
@@ -67,6 +57,11 @@ fn test_add_signer() {
 
     // TODO Add checks for blank IBC channel / unknown channel on chain
     // TODO Test for invalid IBC timeouts
+
+    println!("Bridge address: {}", bridge_address);
+
+    // Test add signer
+    // let signer = Addr::unchecked("signer");
 
     assert_eq!("test", "test");
 }

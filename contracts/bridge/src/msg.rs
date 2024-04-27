@@ -28,6 +28,8 @@ pub struct MigrateMsg {}
 pub enum ExecuteMsg {
     /// Link and enable a CFT-20 token to be bridged
     LinkToken {
+        /// The chain ID of the source chain
+        source_chain_id: String,
         /// The metadata of the CFT-20 token
         token: TokenMetadata,
         /// The signatures of from the verifying parties

@@ -1,4 +1,3 @@
-use base64::DecodeError;
 use cosmwasm_std::{OverflowError, StdError, VerificationError};
 use cw_utils::PaymentError;
 use thiserror::Error;

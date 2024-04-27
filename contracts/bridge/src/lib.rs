@@ -8,4 +8,4 @@ pub mod types;
 pub mod verifier;
 
 // #[cfg(test)]
-// mod mock;
+// mod tests;
