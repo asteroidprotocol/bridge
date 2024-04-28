@@ -35,8 +35,14 @@ pub enum ContractError {
     #[error("Insufficient valid signatures to confirm the message")]
     ThresholdNotMet {},
 
+    #[error("Duplicated signatures are not allowed")]
+    DuplicateSignatures {},
+
     #[error("No signers have been loaded or provided by the caller")]
     NoSigners {},
+
+    #[error("Invalid signer threshold")]
+    InvalidSignerThreshold {},
 
     #[error("This token has been disabled from bridging: {ticker}")]
     TokenDisabled { ticker: String },

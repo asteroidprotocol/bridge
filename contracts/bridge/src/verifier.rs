@@ -1,67 +1,72 @@
 use base64::{engine::general_purpose, Engine as _};
-use cosmwasm_std::Deps;
+use cosmwasm_std::{Deps, Order};
 use neutron_sdk::bindings::query::NeutronQuery;
 
 use crate::{
     error::ContractError,
     state::{CONFIG, SIGNERS},
-    types::Verifier,
+    // types::Verifier,
 };
 
-/// Verify the message and signatures against the current loaded public keys
+/// Verify the signatures against the current loaded public keys
 /// Once we reach the valid threshold, we return Ok
 /// If we don't have enough valid signatures, we return Err
 pub fn verify_signatures(
     deps: Deps<NeutronQuery>,
     message: &[u8],
-    verifiers: &[Verifier],
+    signatures: &[String],
 ) -> Result<(), ContractError> {
     let config = CONFIG.load(deps.storage)?;
 
     // If no signatures were sent, fail the verification
-    if verifiers.is_empty() {
+    if signatures.is_empty() {
         return Err(ContractError::NoSigners {});
     }
 
-    // If we have no signers loaded, we can't verify anything
-    if SIGNERS.is_empty(deps.storage) {
-        return Err(ContractError::NoSigners {});
+    // If duplicate signatures are sent, fail the verification
+    let mut unique_signatures = signatures.to_vec();
+    unique_signatures.sort();
+    unique_signatures.dedup();
+    if unique_signatures.len() != signatures.len() {
+        return Err(ContractError::DuplicateSignatures {});
     }
 
-    // Verify the signatures
+    // If the number of unique signatures are less than the threshold, fail the verification
+    if unique_signatures.len() < config.signer_threshold.into() {
+        return Err(ContractError::ThresholdNotMet {});
+    }
+
+    // Load the current allowed public keys
+    let allowed_keys = SIGNERS.keys(deps.storage, None, None, Order::Ascending);
+
     let mut verified_signatures = 0;
-    for verifier in verifiers {
-        // Verify that the keys sent as the signers are loaded
-        let public_key =
-            match general_purpose::STANDARD.decode(verifier.public_key_base64.as_bytes()) {
-                Ok(bytes) => bytes,
-                Err(e) => panic!("Failed to decode public key base64: {}", e),
-            };
-        if !SIGNERS.has(deps.storage, &public_key) {
-            return Err(ContractError::VerifierNotLoaded {
-                public_key_base64: verifier.public_key_base64.to_string(),
-            });
-        }
 
-        let signature = general_purpose::STANDARD.decode(&verifier.signature_base64)?;
+    // Decode signatures from base64
+    let decoded_signatures: Result<Vec<_>, _> = unique_signatures
+        .iter()
+        .map(|sig| general_purpose::STANDARD.decode(sig))
+        .collect();
+    let decoded_signatures = decoded_signatures?;
 
-        // If the verifier is loaded, we can check the signature. If it is valid
-        // we increment the verified_signatures counter
-        let is_valid = deps.api.ed25519_verify(message, &signature, &public_key)?;
-        if !is_valid {
-            return Err(ContractError::ThresholdNotMet {});
-        }
+    // Verify the signatures against the loaded keys
+    // This requires iterating over the signatures and the loaded keys
+    // and thus we should not keep too many keys loaded
+    for loaded_key in allowed_keys {
+        let allowed_key = loaded_key?;
 
-        // If it fails, return immediately
-        verified_signatures += 1;
-        // If we have enough valid signatures, we don't need to check the rest
-        if verified_signatures >= config.signer_threshold {
-            return Ok(());
+        for signature in &decoded_signatures {
+            let is_valid = deps.api.ed25519_verify(message, signature, &allowed_key)?;
+            if is_valid {
+                verified_signatures += 1;
+                if verified_signatures >= config.signer_threshold {
+                    return Ok(());
+                }
+                // We can move on to the next key and signatures
+                break;
+            }
         }
     }
-
-    // If we reach here, we don't have enough valid signatures and thus
-    // consider the message invalid
+    // If we reach this point, we did not have enough valid signatures
     Err(ContractError::ThresholdNotMet {})
 }
 

@@ -36,13 +36,6 @@ pub struct TokenMetadata {
     pub decimals: u32,
 }
 
-/// The structure to hold verification information
-#[cw_serde]
-pub struct Verifier {
-    pub public_key_base64: String,
-    pub signature_base64: String,
-}
-
 #[cw_serde]
 pub struct QuerySignersResponse {
     pub signers: Vec<(String, String)>,

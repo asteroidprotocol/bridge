@@ -1,7 +1,7 @@
 use cosmwasm_schema::{cw_serde, QueryResponses};
 use cosmwasm_std::Uint128;
 
-use crate::types::{Config, QuerySignersResponse, QueryTokensResponse, TokenMetadata, Verifier};
+use crate::types::{Config, QuerySignersResponse, QueryTokensResponse, TokenMetadata};
 
 /// Holds the parameters used for creating a Hub contract
 #[cw_serde]
@@ -33,7 +33,7 @@ pub enum ExecuteMsg {
         /// The metadata of the CFT-20 token
         token: TokenMetadata,
         /// The signatures of from the verifying parties
-        verifiers: Vec<Verifier>,
+        signatures: Vec<String>,
     },
     // Enable a previously disabled token to being bridged again
     EnableToken {
@@ -58,7 +58,7 @@ pub enum ExecuteMsg {
         /// The destination address to transfer the CFT-20-equivalent to
         destination_addr: String,
         /// The signatures of from the verifying parties
-        verifiers: Vec<Verifier>,
+        signatures: Vec<String>,
     },
     /// Send CFT-20 token back to the Hub
     Send {

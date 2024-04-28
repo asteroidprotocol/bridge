@@ -32,6 +32,11 @@ pub fn instantiate(
         });
     }
 
+    // Signer threshold can't be zero
+    if msg.signer_threshold == 0 {
+        return Err(ContractError::InvalidSignerThreshold {});
+    }
+
     // TODO: Validate the bridge IBC channel
 
     let config = Config {

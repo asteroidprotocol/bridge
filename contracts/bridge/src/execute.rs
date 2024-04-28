@@ -14,9 +14,7 @@ use crate::state::{
     DISABLED_TOKENS, HANDLED_TRANSACTIONS, OWNERSHIP_PROPOSAL, SIGNERS, TOKEN_MAPPING,
     TOKEN_METADATA,
 };
-use crate::types::{
-    Config, TokenMetadata, Verifier, MAX_IBC_TIMEOUT_SECONDS, MIN_IBC_TIMEOUT_SECONDS,
-};
+use crate::types::{Config, TokenMetadata, MAX_IBC_TIMEOUT_SECONDS, MIN_IBC_TIMEOUT_SECONDS};
 use crate::verifier::verify_signatures;
 use crate::{error::ContractError, state::CONFIG};
 
@@ -67,8 +65,8 @@ pub fn execute(
         ExecuteMsg::LinkToken {
             source_chain_id,
             token,
-            verifiers,
-        } => link_token(deps, env, source_chain_id, token, verifiers),
+            signatures,
+        } => link_token(deps, env, source_chain_id, token, signatures),
         ExecuteMsg::EnableToken { ticker } => enable_token(deps, env, info, ticker),
         ExecuteMsg::DisableToken { ticker } => disable_token(deps, env, info, ticker),
         ExecuteMsg::Receive {
@@ -77,7 +75,7 @@ pub fn execute(
             ticker,
             amount,
             destination_addr,
-            verifiers,
+            signatures,
         } => bridge_receive(
             deps,
             env,
@@ -86,7 +84,7 @@ pub fn execute(
             ticker,
             amount,
             destination_addr,
-            verifiers,
+            signatures,
         ),
         ExecuteMsg::Send { destination_addr } => bridge_send(deps, env, info, destination_addr),
         ExecuteMsg::AddSigner {
@@ -155,7 +153,7 @@ fn link_token(
     env: Env,
     source_chain_id: String,
     token: TokenMetadata,
-    verifiers: Vec<Verifier>,
+    signatures: Vec<String>,
 ) -> Result<Response<NeutronMsg>, ContractError> {
     // If we already have this token, return an error
     if TOKEN_MAPPING.has(deps.storage, &token.ticker) {
@@ -176,7 +174,7 @@ fn link_token(
     );
 
     // Verify with current keys
-    verify_signatures(deps.as_ref(), attestation.as_bytes(), &verifiers)?;
+    verify_signatures(deps.as_ref(), attestation.as_bytes(), &signatures)?;
 
     // If not, create the denom and set the metadata
     let create_denom_msg = SubMsg::reply_on_success(
@@ -303,7 +301,7 @@ fn bridge_receive(
     ticker: String,
     amount: Uint128,
     destination_addr: String,
-    verifiers: Vec<Verifier>,
+    signatures: Vec<String>,
 ) -> Result<Response<NeutronMsg>, ContractError> {
     // Check if the token is disabled
     if DISABLED_TOKENS.has(deps.storage, &ticker) {
@@ -341,7 +339,7 @@ fn bridge_receive(
         destination_addr
     );
 
-    verify_signatures(deps.as_ref(), attestation.as_bytes(), &verifiers)?;
+    verify_signatures(deps.as_ref(), attestation.as_bytes(), &signatures)?;
 
     let tokenfactory_denom = TOKEN_MAPPING.load(deps.storage, &ticker)?;
 
@@ -544,6 +542,11 @@ fn update_config(
     // TODO Verify threshold
 
     if let Some(signer_threshold) = signer_threshold {
+        // Signer threshold can't be zero
+        if signer_threshold == 0 {
+            return Err(ContractError::InvalidSignerThreshold {});
+        }
+
         config.signer_threshold = signer_threshold;
     }
 
