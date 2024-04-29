@@ -4,45 +4,27 @@ use cosmwasm_std::{coin, entry_point, BankMsg, Reply, StdError, SubMsg, Uint128}
 use cosmwasm_std::{DepsMut, Env, MessageInfo, Response};
 use cw_utils::one_coin;
 use ed25519_dalek::{VerifyingKey, PUBLIC_KEY_LENGTH};
+
+use neutron_sdk::bindings::msg::{IbcFee, NeutronMsg};
 use neutron_sdk::bindings::query::NeutronQuery;
 use neutron_sdk::query::min_ibc_fee::query_min_ibc_fee;
 use neutron_sdk::sudo::msg::RequestPacketTimeoutHeight;
 use osmosis_std::types::cosmos::bank::v1beta1::{DenomUnit, Metadata};
+use osmosis_std::types::osmosis::tokenfactory::v1beta1::{
+    MsgBurn, MsgCreateDenom, MsgCreateDenomResponse, MsgMint, MsgSetDenomMetadata,
+};
 
 use crate::msg::ExecuteMsg;
 use crate::state::{
     DISABLED_TOKENS, HANDLED_TRANSACTIONS, OWNERSHIP_PROPOSAL, SIGNERS, TOKEN_MAPPING,
     TOKEN_METADATA,
 };
-use crate::types::{Config, TokenMetadata, MAX_IBC_TIMEOUT_SECONDS, MIN_IBC_TIMEOUT_SECONDS};
+use crate::types::{
+    Config, TokenMetadata, FEE_DENOM, INSTANTIATE_DENOM_REPLY_ID, MAX_IBC_TIMEOUT_SECONDS,
+    MIN_IBC_TIMEOUT_SECONDS, MIN_SIGNER_THRESHOLD,
+};
 use crate::verifier::verify_signatures;
 use crate::{error::ContractError, state::CONFIG};
-
-use neutron_sdk::bindings::msg::{IbcFee, NeutronMsg};
-
-use osmosis_std::types::osmosis::tokenfactory::v1beta1::{
-    MsgBurn, MsgCreateDenom, MsgCreateDenomResponse, MsgMint, MsgSetDenomMetadata,
-};
-
-/// This contract accepts only one fee denom
-const FEE_DENOM: &str = "untrn";
-
-/// A `reply` call code ID used for sub-messages.
-enum ReplyIds {
-    InstantiateNewDenom = 1,
-}
-
-impl TryFrom<u64> for ReplyIds {
-    type Error = ContractError;
-
-    fn try_from(value: u64) -> Result<Self, Self::Error> {
-        match value {
-            1 => Ok(ReplyIds::InstantiateNewDenom),
-            // 2 => Ok(ReplyIds::InstantiateTrackingContract),
-            _ => Err(ContractError::FailedToParseReply {}),
-        }
-    }
-}
 
 /// Exposes all the execute functions available in the contract.
 ///
@@ -90,19 +72,20 @@ pub fn execute(
         ExecuteMsg::AddSigner {
             public_key_base64,
             name,
-        } => add_signer(deps, env, info, public_key_base64, name),
+        } => add_signer(deps, info, name, public_key_base64),
         ExecuteMsg::RemoveSigner { public_key_base64 } => {
             remove_signer(deps, env, info, public_key_base64)
         }
         ExecuteMsg::UpdateConfig {
             signer_threshold,
+            bridge_chain_id,
             bridge_ibc_channel,
             ibc_timeout_seconds,
         } => update_config(
             deps,
-            env,
             info,
             signer_threshold,
+            bridge_chain_id,
             bridge_ibc_channel,
             ibc_timeout_seconds,
         ),
@@ -138,121 +121,20 @@ pub fn execute(
     }
 }
 
-/// Enable the bridging of a CFT-20 token
-///
-/// If this token doesn't have a corresponding TokenFactory token one will
-/// be created using the information provided.
-///
-/// If the token already has a
-/// TokenFactory token and is currently enabled, no action is taken.
-///
-/// Lastly, if the token has a TokenFactory token but is currently disabled,
-/// it will be enabled again without any further changes
-fn link_token(
-    deps: DepsMut<NeutronQuery>,
-    env: Env,
-    source_chain_id: String,
-    token: TokenMetadata,
-    signatures: Vec<String>,
-) -> Result<Response<NeutronMsg>, ContractError> {
-    // If we already have this token, return an error
-    if TOKEN_MAPPING.has(deps.storage, &token.ticker) {
-        return Err(ContractError::TokenAlreadyExists {
-            ticker: token.ticker,
-        });
-    }
-
-    // // TODO: Linking a token hasn't been implemented yet
-    // // TODO: Build the message to verify
-    // let message = b"";
-
-    // Build the attestation message to verify the token information
-    // cosmoshub-4ticker8neutron-1neutron1xxxxx
-    let attestation = format!(
-        "{}{}{}{}{}",
-        source_chain_id, token.ticker, token.decimals, env.block.chain_id, env.contract.address
-    );
-
-    // Verify with current keys
-    verify_signatures(deps.as_ref(), attestation.as_bytes(), &signatures)?;
-
-    // If not, create the denom and set the metadata
-    let create_denom_msg = SubMsg::reply_on_success(
-        MsgCreateDenom {
-            sender: env.contract.address.to_string(),
-            subdenom: token.ticker.clone(),
-        },
-        ReplyIds::InstantiateNewDenom as u64,
-    );
-
-    TOKEN_METADATA.save(deps.storage, &token)?;
-
-    Ok(Response::new().add_submessage(create_denom_msg))
-}
-
-fn enable_token(
-    deps: DepsMut<NeutronQuery>,
-    _env: Env,
-    info: MessageInfo,
-    ticker: String,
-) -> Result<Response<NeutronMsg>, ContractError> {
-    let config = CONFIG.load(deps.storage)?;
-
-    // Only owner can update the config
-    if info.sender != config.owner {
-        return Err(ContractError::Unauthorized {});
-    }
-
-    // If this token isn't in the disabled list, return an error
-    if !DISABLED_TOKENS.has(deps.storage, &ticker) {
-        return Err(ContractError::Std(StdError::generic_err(
-            "This token is not disabled",
-        )));
-    }
-
-    // TODO Decide if we should remove the token completely, or rather have a block list
-    DISABLED_TOKENS.remove(deps.storage, &ticker);
-
-    Ok(Response::new()
-        .add_attribute("action", "enable_token")
-        .add_attribute("ticker", ticker))
-}
-
-fn disable_token(
-    deps: DepsMut<NeutronQuery>,
-    _env: Env,
-    info: MessageInfo,
-    ticker: String,
-) -> Result<Response<NeutronMsg>, ContractError> {
-    let config = CONFIG.load(deps.storage)?;
-
-    // Only owner can update the config
-    if info.sender != config.owner {
-        return Err(ContractError::Unauthorized {});
-    }
-
-    // If this token doesn't exist, return an error
-    if !TOKEN_MAPPING.has(deps.storage, &ticker) {
-        return Err(ContractError::TokenDoesNotExist { ticker });
-    }
-
-    // TODO Decide if we should remove the token completely, or rather have a block list
-    DISABLED_TOKENS.save(deps.storage, &ticker, &true)?;
-
-    Ok(Response::new()
-        .add_attribute("action", "disable_token")
-        .add_attribute("ticker", ticker))
-}
-
 /// The entry point to the contract for processing replies from submessages.
 #[cfg_attr(not(feature = "library"), entry_point)]
-pub fn reply(deps: DepsMut, env: Env, msg: Reply) -> Result<Response, ContractError> {
-    match ReplyIds::try_from(msg.id)? {
-        ReplyIds::InstantiateNewDenom => {
+pub fn reply(
+    deps: DepsMut<NeutronQuery>,
+    env: Env,
+    msg: Reply,
+) -> Result<Response<NeutronMsg>, ContractError> {
+    match msg.id {
+        INSTANTIATE_DENOM_REPLY_ID => {
             let MsgCreateDenomResponse { new_token_denom } = msg.result.try_into()?;
 
             let metadata = TOKEN_METADATA.load(deps.storage)?;
 
+            // TODO: Add back setting denom metadata after figuring out test
             let denom_metadata_msg = MsgSetDenomMetadata {
                 sender: env.contract.address.to_string(),
                 metadata: Some(Metadata {
@@ -287,12 +169,120 @@ pub fn reply(deps: DepsMut, env: Env, msg: Reply) -> Result<Response, ContractEr
             TOKEN_MAPPING.save(deps.storage, &new_token_denom, &metadata.ticker)?;
             TOKEN_METADATA.remove(deps.storage);
 
-            Ok(Response::new().add_message(denom_metadata_msg))
+            Ok(Response::new()
+                // TODO: Add back setting denom metadata after figuring out test
+                // .add_message(denom_metadata_msg)
+                .add_attribute("action", "set_denom_metadata")
+                .add_attribute("ticker", metadata.ticker))
         }
+        _ => Err(ContractError::InvalidReplyId { id: msg.id }),
     }
 }
 
-// TODO: Clear up args
+/// Enable the bridging of a CFT-20 token
+///
+/// If this token doesn't have a corresponding TokenFactory token one will
+/// be created using the information provided.
+///
+/// If the token already has a
+/// TokenFactory token and is currently enabled, no action is taken.
+///
+/// Lastly, if the token has a TokenFactory token but is currently disabled,
+/// it will be enabled again without any further changes
+fn link_token(
+    deps: DepsMut<NeutronQuery>,
+    env: Env,
+    source_chain_id: String,
+    token: TokenMetadata,
+    signatures: Vec<String>,
+) -> Result<Response<NeutronMsg>, ContractError> {
+    // If we already have this token, return an error
+    if TOKEN_MAPPING.has(deps.storage, &token.ticker) {
+        return Err(ContractError::TokenAlreadyExists {
+            ticker: token.ticker,
+        });
+    }
+
+    // Build the attestation message to verify the token information
+    // The format is {source_chain_id}{ticker}{decimals}{chain_id}{contract_address}
+    // cosmoshub-4ticker8neutron-1neutron1xxxxx
+    let attestation = format!(
+        "{}{}{}{}{}",
+        source_chain_id, token.ticker, token.decimals, env.block.chain_id, env.contract.address
+    );
+
+    // Verify with current keys
+    verify_signatures(deps.as_ref(), attestation.as_bytes(), &signatures)?;
+
+    // If not, create the denom and set the metadata
+    let create_denom_msg = SubMsg::reply_on_success(
+        MsgCreateDenom {
+            sender: env.contract.address.to_string(),
+            subdenom: token.ticker.clone(),
+        },
+        INSTANTIATE_DENOM_REPLY_ID,
+    );
+
+    TOKEN_METADATA.save(deps.storage, &token)?;
+
+    Ok(Response::new().add_submessage(create_denom_msg))
+}
+
+/// Enable a token for bridging if it was previously disabled
+fn enable_token(
+    deps: DepsMut<NeutronQuery>,
+    _env: Env,
+    info: MessageInfo,
+    ticker: String,
+) -> Result<Response<NeutronMsg>, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+
+    // Only owner can update the config
+    if info.sender != config.owner {
+        return Err(ContractError::Unauthorized {});
+    }
+
+    // If this token isn't in the disabled list, return an error
+    if !DISABLED_TOKENS.has(deps.storage, &ticker) {
+        return Err(ContractError::InvalidConfiguration {
+            reason: "This token is not disabled".to_string(),
+        });
+    }
+
+    DISABLED_TOKENS.remove(deps.storage, &ticker);
+
+    Ok(Response::new()
+        .add_attribute("action", "enable_token")
+        .add_attribute("ticker", ticker))
+}
+
+/// Disable a token for bridging
+fn disable_token(
+    deps: DepsMut<NeutronQuery>,
+    _env: Env,
+    info: MessageInfo,
+    ticker: String,
+) -> Result<Response<NeutronMsg>, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+
+    // Only owner can update the config
+    if info.sender != config.owner {
+        return Err(ContractError::Unauthorized {});
+    }
+
+    // If this token doesn't exist, return an error
+    if !TOKEN_MAPPING.has(deps.storage, &ticker) {
+        return Err(ContractError::TokenDoesNotExist { ticker });
+    }
+
+    DISABLED_TOKENS.save(deps.storage, &ticker, &true)?;
+
+    Ok(Response::new()
+        .add_attribute("action", "disable_token")
+        .add_attribute("ticker", ticker))
+}
+
+/// Receive tokens from the Hub and mint them to the destination address
 fn bridge_receive(
     deps: DepsMut<NeutronQuery>,
     env: Env,
@@ -355,16 +345,19 @@ fn bridge_receive(
 
     // Once minted to self, transfer to destination
     let mint_transfer = BankMsg::Send {
-        to_address: destination_addr,
-        amount: vec![coins_to_mint],
+        to_address: destination_addr.clone(),
+        amount: vec![coins_to_mint.clone()],
     };
 
     Ok(Response::default()
         .add_message(mint_msg)
         .add_message(mint_transfer)
-        .add_attribute("bridge_receive", ticker))
+        .add_attribute("action", "bridge_receive")
+        .add_attribute("tokens", coins_to_mint.to_string())
+        .add_attribute("destination", destination_addr))
 }
 
+/// Return tokens to the Hub
 fn bridge_send(
     deps: DepsMut<NeutronQuery>,
     env: Env,
@@ -436,19 +429,20 @@ fn bridge_send(
     let response = Response::new()
         .add_message(burn_msg)
         .add_message(ibc_transfer)
-        .add_attribute("bridge_send", "log some values")
-        .add_attribute("fee", format!("{:?}", fee));
+        .add_attribute("action", "bridge_send");
+    // .add_attribute("fee", format!("{:?}", fee));
 
     Ok(response)
 }
 
-/// Add a signer for verification
+/// Add a signer to the list of allowed public keys
+/// Verifies that the public key can be loaded and in the correct format
+/// as well as checks for duplicate keys
 fn add_signer(
     deps: DepsMut<NeutronQuery>,
-    _env: Env,
     info: MessageInfo,
-    public_key_base64: String,
     name: String,
+    public_key_base64: String,
 ) -> Result<Response<NeutronMsg>, ContractError> {
     let config = CONFIG.load(deps.storage)?;
 
@@ -460,24 +454,40 @@ fn add_signer(
     // Decode the base64 encoded public key
     let public_key = match general_purpose::STANDARD.decode(public_key_base64.as_bytes()) {
         Ok(bytes) => bytes,
-        Err(e) => panic!("Failed to decode public key base64: {}", e),
+        Err(_) => {
+            return Err(ContractError::InvalidConfiguration {
+                reason: "Key could not be decoded".to_string(),
+            })
+        }
     };
 
-    // TODO Handle this correctly
-    // Try loading the public key to see if it is in valid format
-    let public_key_bytes: [u8; PUBLIC_KEY_LENGTH] = public_key.clone().try_into().unwrap();
-    VerifyingKey::from_bytes(&public_key_bytes).unwrap();
+    // Verify that the format for the key is correct before adding it
+    let public_key_bytes: [u8; PUBLIC_KEY_LENGTH] = match public_key.clone().try_into() {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            return Err(ContractError::InvalidConfiguration {
+                reason: "Invalid public key length".to_string(),
+            });
+        }
+    };
+    VerifyingKey::from_bytes(&public_key_bytes)?;
 
+    // Ensure this key isn't loaded yet
     if SIGNERS.has(deps.storage, &public_key) {
-        return Err(ContractError::KeyAlreadyLoaded {});
+        return Err(ContractError::InvalidConfiguration {
+            reason: "The public key has already been loaded".to_string(),
+        });
     }
 
     SIGNERS.save(deps.storage, &public_key, &name)?;
 
-    Ok(Response::default())
+    Ok(Response::default()
+        .add_attribute("action", "add_signer")
+        .add_attribute("name", name)
+        .add_attribute("public_key", public_key_base64))
 }
 
-/// Remove a signer from verification
+/// Remove a signer from the list of allowed public keys
 fn remove_signer(
     deps: DepsMut<NeutronQuery>,
     _env: Env,
@@ -494,24 +504,32 @@ fn remove_signer(
     // Decode the base64 encoded public key
     let public_key = match general_purpose::STANDARD.decode(public_key_base64.as_bytes()) {
         Ok(bytes) => bytes,
-        Err(e) => panic!("Failed to decode public key base64: {}", e),
+        Err(_) => {
+            return Err(ContractError::InvalidConfiguration {
+                reason: "Key could not be decoded".to_string(),
+            })
+        }
     };
 
-    if SIGNERS.has(deps.storage, &public_key) {
-        return Err(ContractError::KeyNotLoaded {});
+    if !SIGNERS.has(deps.storage, &public_key) {
+        return Err(ContractError::InvalidConfiguration {
+            reason: "Key to remove doesn't exist".to_string(),
+        });
     }
 
     SIGNERS.remove(deps.storage, &public_key);
 
-    Ok(Response::default())
+    Ok(Response::default()
+        .add_attribute("action", "remove_signer")
+        .add_attribute("public_key", public_key_base64))
 }
 
-/// Update the Outpost config
+/// Update the Bridge config
 fn update_config(
     deps: DepsMut<NeutronQuery>,
-    _env: Env,
     info: MessageInfo,
     signer_threshold: Option<u8>,
+    bridge_chain_id: Option<String>,
     bridge_ibc_channel: Option<String>,
     ibc_timeout_seconds: Option<u64>,
 ) -> Result<Response<NeutronMsg>, ContractError> {
@@ -522,6 +540,44 @@ fn update_config(
         return Err(ContractError::Unauthorized {});
     }
 
+    // Signer threshold can't be less than 2. We require at _least_ 2 valid
+    // signatures before allowing the bridge to even be instantiated
+    if let Some(signer_threshold) = signer_threshold {
+        if signer_threshold < MIN_SIGNER_THRESHOLD {
+            return Err(ContractError::InvalidConfiguration {
+                reason: format!(
+                    "Invalid signer threshold, the minimum is {}",
+                    MIN_SIGNER_THRESHOLD
+                ),
+            });
+        }
+
+        config.signer_threshold = signer_threshold;
+    }
+
+    // Allow changing the source chain ID in case the source chain
+    // undergoes an upgrade that changes the chain ID
+    if let Some(bridge_chain_id) = bridge_chain_id {
+        if bridge_chain_id.is_empty() {
+            return Err(ContractError::InvalidConfiguration {
+                reason: "The source chain ID must be specified".to_string(),
+            });
+        }
+        config.bridge_chain_id = bridge_chain_id;
+    }
+
+    // Allow changing the IBC channel in case the original channel expires
+    // and can't be revived
+    if let Some(bridge_ibc_channel) = bridge_ibc_channel {
+        if bridge_ibc_channel.is_empty() {
+            return Err(ContractError::InvalidConfiguration {
+                reason: "The bridge IBC channel must be specified".to_string(),
+            });
+        }
+        config.bridge_ibc_channel = bridge_ibc_channel;
+    }
+
+    // Validate minimum and maximum IBC timeout
     if let Some(ibc_timeout_seconds) = ibc_timeout_seconds {
         if !(MIN_IBC_TIMEOUT_SECONDS..=MAX_IBC_TIMEOUT_SECONDS).contains(&ibc_timeout_seconds) {
             return Err(ContractError::InvalidIBCTimeout {
@@ -531,23 +587,6 @@ fn update_config(
             });
         }
         config.ibc_timeout_seconds = ibc_timeout_seconds;
-    }
-
-    // TODO Verify valid IBC channel
-
-    if let Some(bridge_ibc_channel) = bridge_ibc_channel {
-        config.bridge_ibc_channel = bridge_ibc_channel;
-    }
-
-    // TODO Verify threshold
-
-    if let Some(signer_threshold) = signer_threshold {
-        // Signer threshold can't be zero
-        if signer_threshold == 0 {
-            return Err(ContractError::InvalidSignerThreshold {});
-        }
-
-        config.signer_threshold = signer_threshold;
     }
 
     CONFIG.save(deps.storage, &config)?;

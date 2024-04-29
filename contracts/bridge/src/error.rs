@@ -1,5 +1,6 @@
 use cosmwasm_std::{OverflowError, StdError, VerificationError};
 use cw_utils::PaymentError;
+use ed25519_dalek::SignatureError;
 use thiserror::Error;
 
 /// This enum describes bribes contract errors
@@ -64,6 +65,12 @@ pub enum ContractError {
 
     #[error("Invalid IBC timeout: {timeout}, must be between {min} and {max} seconds")]
     InvalidIBCTimeout { timeout: u64, min: u64, max: u64 },
+
+    #[error("Invalid contract configuration: {reason}")]
+    InvalidConfiguration { reason: String },
+
+    #[error("Invalid reply ID: {id}")]
+    InvalidReplyId { id: u64 },
 }
 
 impl From<OverflowError> for ContractError {
@@ -75,6 +82,15 @@ impl From<OverflowError> for ContractError {
 impl From<VerificationError> for ContractError {
     fn from(v: VerificationError) -> Self {
         StdError::from(v).into()
+    }
+}
+
+impl From<SignatureError> for ContractError {
+    fn from(v: SignatureError) -> Self {
+        let std_error = StdError::generic_err(format!("Signature decode error: {}", v));
+
+        // Utilize the existing conversion from StdError to ContractError
+        ContractError::from(std_error)
     }
 }
 

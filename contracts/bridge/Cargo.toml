@@ -23,7 +23,11 @@ library = []
 cw2 = "1.0.1"
 cosmwasm-schema = "1.1.0"
 cw-utils = "1.0.1"
-cosmwasm-std = { version = "1.5.0", features = ["iterator", "ibc3"] }
+cosmwasm-std = { version = "1.5.0", features = [
+    "iterator",
+    "ibc3",
+    "stargate",
+] }
 cw-storage-plus = "0.15"
 schemars = "0.8.12"
 serde = { version = "1.0.164", default-features = false, features = ["derive"] }
@@ -35,5 +39,11 @@ astroport = "3.11.1"
 ed25519-dalek = "2"
 
 [dev-dependencies]
-cw-multi-test = "0.16.5"
+# cw-multi-test = "0.16.5"
 anyhow = "1.0"
+astroport-test = { git = "https://github.com/astroport-fi/hidden_astroport_core", branch = "feat/lp-tokenfactory", features = [
+    "cosmwasm_1_1",
+] }
+cw-multi-test = { git = "https://github.com/astroport-fi/cw-multi-test", branch = "feat/bank_with_send_hooks", features = [
+    "cosmwasm_1_1",
+] }

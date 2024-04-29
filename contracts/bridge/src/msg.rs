@@ -82,6 +82,8 @@ pub enum ExecuteMsg {
     UpdateConfig {
         /// The new threshold of signers needed to confirm a message
         signer_threshold: Option<u8>,
+        /// The chain ID this bridge is connected to
+        bridge_chain_id: Option<String>,
         /// The new IBC channel to the Cosmos Hub to use
         bridge_ibc_channel: Option<String>,
         /// The timeout in seconds for IBC packets
@@ -107,13 +109,6 @@ pub enum QueryMsg {
     /// Returns the config of the Bridge
     #[returns(Config)]
     Config {},
-    /// Test whether a signature is valid given the public key and attestation
-    #[returns(String)]
-    TestVerifySignature {
-        public_key_base64: String,
-        signature_base64: String,
-        attestation: String,
-    },
     /// Returns the allowed signers for signature verification
     #[returns(QuerySignersResponse)]
     Signers {},
