@@ -1,4 +1,6 @@
-# Bridge
+# Neutron Bridge
+
+    NOTE: This contract is specific to Neutron
 
 The bridge contract is responsible for verifying transfers coming from the Cosmos Hub and minting the associated TokenFactory token if the transfer is valid. Conversely, it releases CFT-20 tokens and burns the TokenFactory ones when bridging back to the Cosmos Hub
 
