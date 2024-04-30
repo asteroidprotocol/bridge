@@ -65,6 +65,9 @@ pub enum ExecuteMsg {
         /// The destination address to transfer the CFT-20-equivalent to
         destination_addr: String,
     },
+    /// Retry a failed IBC transaction, the failure IDs can be retrieved using
+    /// > neutrond query contractmanager failures [contract-address]
+    RetrySend { failure_id: u64 },
     /// Adds a signer to the allowed list for signature verification
     AddSigner {
         /// The public key in base64. This is the raw key without the ASN.1
@@ -79,6 +82,7 @@ pub enum ExecuteMsg {
         /// AddSigner
         public_key_base64: String,
     },
+    /// Update the contract config
     UpdateConfig {
         /// The new threshold of signers needed to confirm a message
         signer_threshold: Option<u8>,

@@ -14,10 +14,12 @@ const DEFAULT_LIMIT: u32 = 10;
 ///
 /// ## Queries
 /// * **QueryMsg::Config {}** Returns the config of the Bridge
+/// * **QueryMsg::Signers {}** Returns the current signers and their public keys in base64
+/// * **QueryMsg::Tokens { start_after, limit }** Returns the CFT-20 and TokenFactory tokens that can be bridged
+/// * **QueryMsg::DisabledTokens { start_after, limit }** Returns the CFT-20 and TokenFactory tokens that have been disabled from bridging},
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn query(deps: Deps<NeutronQuery>, _env: Env, msg: QueryMsg) -> StdResult<Binary> {
     match msg {
-        // QueryMsg::Config {} => to_json_binary(&CONFIG.load(deps.storage)?),
         QueryMsg::Config {} => to_json_binary(&CONFIG.load(deps.storage)?),
         QueryMsg::Signers {} => {
             let signers: Result<Vec<_>, StdError> = SIGNERS

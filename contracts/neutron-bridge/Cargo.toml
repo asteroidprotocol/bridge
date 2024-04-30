@@ -1,5 +1,5 @@
 [package]
-name = "asteroid-bridge"
+name = "asteroid-neutron-bridge"
 version = "1.0.0"
 authors = ["Asteroid Protocol"]
 edition = "2021"

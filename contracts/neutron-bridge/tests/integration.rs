@@ -1,31 +1,17 @@
-use anyhow::{anyhow, Result as AnyResult};
-use asteroid_bridge::contract::instantiate;
-use asteroid_bridge::error::ContractError;
-use asteroid_bridge::execute::{execute, reply};
-use asteroid_bridge::msg::{ExecuteMsg, InstantiateMsg, QueryMsg};
-use asteroid_bridge::query::query;
-use asteroid_bridge::types::{
+use asteroid_neutron_bridge::contract::instantiate;
+use asteroid_neutron_bridge::error::ContractError;
+use asteroid_neutron_bridge::execute::{execute, reply};
+use asteroid_neutron_bridge::msg::{ExecuteMsg, InstantiateMsg, QueryMsg};
+use asteroid_neutron_bridge::query::query;
+use asteroid_neutron_bridge::types::{
     Config, QuerySignersResponse, QueryTokensResponse, TokenMetadata, MAX_IBC_TIMEOUT_SECONDS,
     MIN_IBC_TIMEOUT_SECONDS, MIN_SIGNER_THRESHOLD,
 };
-use astroport_test::cw_multi_test::{
-    AppBuilder, AppResponse, Contract, ContractWrapper, CosmosRouter, Executor, FailingModule,
-    Module,
-};
+use astroport_test::cw_multi_test::{AppBuilder, Contract, ContractWrapper, Executor};
 use astroport_test::modules::stargate::{MockStargate, StargateApp};
-use cosmwasm_std::{
-    to_json_binary, Addr, Api, Binary, BlockInfo, Coin, CustomQuery, Empty, Querier, Storage,
-    Uint128,
-};
-use std::fmt::Debug;
-// use cw_multi_test::{
-//     AppBuilder, BasicApp, Contract, ContractWrapper, Executor, FailingModule, WasmKeeper,
-// };
-use neutron_sdk::bindings::msg::{IbcFee, NeutronMsg};
+use cosmwasm_std::{Addr, Coin, Uint128};
+use neutron_sdk::bindings::msg::NeutronMsg;
 use neutron_sdk::bindings::query::NeutronQuery;
-use neutron_sdk::query::min_ibc_fee::MinIbcFeeResponse;
-use schemars::JsonSchema;
-use serde::de::DeserializeOwned;
 
 type NeutronApp = StargateApp<NeutronMsg, NeutronQuery>;
 
@@ -43,8 +29,6 @@ const BRIDGE_SIGNATURE_1: &str =
     "ZwoqbZxvNaz06/0ZO+M7g0Ygf5YRKkWYNcm/yD+wYQ43N9/9i5xiSHxMhOo0wttNf5NP/T7Rrlv1Sp3K8qyiCw==";
 const BRIDGE_SIGNATURE_2: &str =
     "+Y5UhcFimBzBnJX8BIFZPR2DjUp3DaYVRF81osV/qx8E4gDWk3z1EtUsLX3oITTld0lc12IQGdpuFcCWDAMVAQ==";
-
-mod common;
 
 fn mock_app(owner: &Addr, coins: Vec<Coin>) -> NeutronApp {
     AppBuilder::new_custom()
@@ -822,7 +806,7 @@ fn test_link_token() {
 
     assert_eq!(
         err.downcast::<ContractError>().unwrap(),
-        ContractError::NoSigners {}
+        ContractError::ThresholdNotMet {}
     );
 
     // Valid signatures
@@ -1238,7 +1222,7 @@ fn test_bridge_receive() {
 
     assert_eq!(
         err.downcast::<ContractError>().unwrap(),
-        ContractError::NoSigners {}
+        ContractError::ThresholdNotMet {}
     );
 
     // Receive token with invalid signature for the amount
@@ -1413,141 +1397,250 @@ fn test_bridge_receive() {
     );
 }
 
-// Bridge send test is currently not available due to custom Neutron queries
+// TODO The Full bridge send test is currently not available due to custom Neutron queries
 // that need to be implemented
-// #[test]
-// fn test_bridge_send() {
-//     let owner = Addr::unchecked("owner");
-//     let not_owner = Addr::unchecked("not_owner");
-//     let user1 = Addr::unchecked("user1");
-//     let mut app = mock_app(&owner, vec![]);
-//     let contract_code = app.store_code(bridge_contract());
+#[test]
+fn test_bridge_send() {
+    let owner = Addr::unchecked("owner");
+    let not_owner = Addr::unchecked("not_owner");
+    let user1 = Addr::unchecked("user1");
+    let mut app = mock_app(
+        &user1,
+        vec![
+            Coin {
+                denom: "untrn".to_string(),
+                amount: Uint128::from(1000000u64),
+            },
+            Coin {
+                denom: "uatom".to_string(),
+                amount: Uint128::from(1000000u64),
+            },
+        ],
+    );
+    let contract_code = app.store_code(bridge_contract());
 
-//     let bridge_address = app
-//         .instantiate_contract(
-//             contract_code,
-//             owner.clone(),
-//             &InstantiateMsg {
-//                 owner: owner.to_string(),
-//                 signer_threshold: 2,
-//                 ibc_timeout_seconds: 10,
-//                 bridge_ibc_channel: "channel-0".to_string(),
-//                 bridge_chain_id: "localgaia-1".to_string(),
-//             },
-//             &[],
-//             "Asteroid Bridge",
-//             None,
-//         )
-//         .unwrap();
+    let bridge_address = app
+        .instantiate_contract(
+            contract_code,
+            owner.clone(),
+            &InstantiateMsg {
+                owner: owner.to_string(),
+                signer_threshold: 2,
+                ibc_timeout_seconds: 10,
+                bridge_ibc_channel: "channel-0".to_string(),
+                bridge_chain_id: "localgaia-1".to_string(),
+            },
+            &[],
+            "Asteroid Bridge",
+            None,
+        )
+        .unwrap();
 
-//     // Add a valid signer
-//     app.execute_contract(
-//         owner.clone(),
-//         bridge_address.clone(),
-//         &ExecuteMsg::AddSigner {
-//             name: "signer1".to_string(),
-//             public_key_base64: VALID_SIGNER_1.to_string(),
-//         },
-//         &[],
-//     )
-//     .unwrap();
+    // Add a valid signer
+    app.execute_contract(
+        owner.clone(),
+        bridge_address.clone(),
+        &ExecuteMsg::AddSigner {
+            name: "signer1".to_string(),
+            public_key_base64: VALID_SIGNER_1.to_string(),
+        },
+        &[],
+    )
+    .unwrap();
 
-//     // Add a second valid signer
-//     app.execute_contract(
-//         owner.clone(),
-//         bridge_address.clone(),
-//         &ExecuteMsg::AddSigner {
-//             name: "signer2".to_string(),
-//             public_key_base64: VALID_SIGNER_2.to_string(),
-//         },
-//         &[],
-//     )
-//     .unwrap();
+    // Add a second valid signer
+    app.execute_contract(
+        owner.clone(),
+        bridge_address.clone(),
+        &ExecuteMsg::AddSigner {
+            name: "signer2".to_string(),
+            public_key_base64: VALID_SIGNER_2.to_string(),
+        },
+        &[],
+    )
+    .unwrap();
 
-//     // Link token
-//     app.execute_contract(
-//         not_owner.clone(),
-//         bridge_address.clone(),
-//         &ExecuteMsg::LinkToken {
-//             source_chain_id: "localgaia-1".to_string(),
-//             token: TokenMetadata {
-//                 ticker: "TESTTOKEN".to_string(),
-//                 name: "TestToken".to_string(),
-//                 image_url: "https://example.com".to_string(),
-//                 decimals: 6,
-//             },
-//             signatures: vec![
-//                 SIGNATURE_1.to_string().clone(),
-//                 SIGNATURE_2.to_string().clone(),
-//             ],
-//         },
-//         &[],
-//     )
-//     .unwrap();
+    // Link token
+    app.execute_contract(
+        not_owner.clone(),
+        bridge_address.clone(),
+        &ExecuteMsg::LinkToken {
+            source_chain_id: "localgaia-1".to_string(),
+            token: TokenMetadata {
+                ticker: "TESTTOKEN".to_string(),
+                name: "TestToken".to_string(),
+                image_url: "https://example.com".to_string(),
+                decimals: 6,
+            },
+            signatures: vec![
+                SIGNATURE_1.to_string().clone(),
+                SIGNATURE_2.to_string().clone(),
+            ],
+        },
+        &[],
+    )
+    .unwrap();
 
-//     // Valid bridge transaction
-//     app.execute_contract(
-//         not_owner.clone(),
-//         bridge_address.clone(),
-//         &ExecuteMsg::Receive {
-//             source_chain_id: "localgaia-1".to_string(),
-//             transaction_hash: "TXHASH1".to_string(),
-//             ticker: "TESTTOKEN".to_string(),
-//             amount: Uint128::from(1000u64),
-//             destination_addr: "user1".to_string(),
-//             signatures: vec![
-//                 BRIDGE_SIGNATURE_1.to_string().clone(),
-//                 BRIDGE_SIGNATURE_2.to_string().clone(),
-//             ],
-//         },
-//         &[],
-//     )
-//     .unwrap();
+    // Valid bridge transaction
+    app.execute_contract(
+        not_owner.clone(),
+        bridge_address.clone(),
+        &ExecuteMsg::Receive {
+            source_chain_id: "localgaia-1".to_string(),
+            transaction_hash: "TXHASH1".to_string(),
+            ticker: "TESTTOKEN".to_string(),
+            amount: Uint128::from(1000u64),
+            destination_addr: "user1".to_string(),
+            signatures: vec![
+                BRIDGE_SIGNATURE_1.to_string().clone(),
+                BRIDGE_SIGNATURE_2.to_string().clone(),
+            ],
+        },
+        &[],
+    )
+    .unwrap();
 
-//     // Assert that the user received the testtoken
-//     let res = app.wrap().query_all_balances("user1").unwrap();
-//     res.iter().for_each(|coin| {
-//         if coin.denom == "factory/contract0/TESTTOKEN" {
-//             assert_eq!(coin.amount, Uint128::from(1000u64));
-//         }
-//     });
+    // Assert that the user received the testtoken
+    let res = app.wrap().query_all_balances("user1").unwrap();
+    res.iter().for_each(|coin| {
+        if coin.denom == "factory/contract0/TESTTOKEN" {
+            assert_eq!(coin.amount, Uint128::from(1000u64));
+        }
+    });
 
-//     // Check the total supply of the token
-//     let res = app
-//         .wrap()
-//         .query_supply("factory/contract0/TESTTOKEN".to_string())
-//         .unwrap();
-//     assert_eq!(res.amount, Uint128::from(1000u64));
+    // Check the total supply of the token
+    let res = app
+        .wrap()
+        .query_supply("factory/contract0/TESTTOKEN".to_string())
+        .unwrap();
+    assert_eq!(res.amount, Uint128::from(1000u64));
 
-//     // Return to the Hub
-//     app.execute_contract(
-//         user1.clone(),
-//         bridge_address.clone(),
-//         &ExecuteMsg::Send {
-//             destination_addr: "cosmos1hubaddress".to_string(),
-//         },
-//         &[
-//             Coin {
-//                 denom: "factory/contract0/TESTTOKEN".to_string(),
-//                 amount: Uint128::from(1u64),
-//             },
-//             // Coin {
-//             //     denom: "untrn".to_string(),
-//             //     amount: Uint128::from(1u64),
-//             // },
-//         ],
-//     )
-//     .unwrap();
+    // Send incorrect tokens
+    let err = app
+        .execute_contract(
+            user1.clone(),
+            bridge_address.clone(),
+            &ExecuteMsg::Send {
+                destination_addr: "cosmos1hubaddress".to_string(),
+            },
+            &[
+                // Coin {
+                //     denom: "factory/contract0/TESTTOKEN".to_string(),
+                //     amount: Uint128::from(1u64),
+                // },
+                Coin {
+                    denom: "untrn".to_string(),
+                    amount: Uint128::from(1u64),
+                },
+            ],
+        )
+        .unwrap_err();
 
-//     // TODO: Ensure the user balance was updated
+    assert_eq!(
+        err.downcast::<ContractError>().unwrap(),
+        ContractError::InvalidFunds {}
+    );
 
-//     // Ensure that the total supply was reduced
-//     let res = app
-//         .wrap()
-//         .query_supply("factory/contract0/TESTTOKEN".to_string())
-//         .unwrap();
-//     assert_eq!(res.amount, Uint128::from(999u64));
-// }
+    let err = app
+        .execute_contract(
+            user1.clone(),
+            bridge_address.clone(),
+            &ExecuteMsg::Send {
+                destination_addr: "cosmos1hubaddress".to_string(),
+            },
+            &[
+                Coin {
+                    denom: "factory/contract0/TESTTOKEN".to_string(),
+                    amount: Uint128::from(1u64),
+                },
+                // Coin {
+                //     denom: "untrn".to_string(),
+                //     amount: Uint128::from(1u64),
+                // },
+            ],
+        )
+        .unwrap_err();
+
+    assert_eq!(
+        err.downcast::<ContractError>().unwrap(),
+        ContractError::InvalidFunds {}
+    );
+
+    let err = app
+        .execute_contract(
+            user1.clone(),
+            bridge_address.clone(),
+            &ExecuteMsg::Send {
+                destination_addr: "cosmos1hubaddress".to_string(),
+            },
+            &[
+                Coin {
+                    denom: "uatom".to_string(),
+                    amount: Uint128::from(1u64),
+                },
+                Coin {
+                    denom: "untrn".to_string(),
+                    amount: Uint128::from(1u64),
+                },
+            ],
+        )
+        .unwrap_err();
+
+    assert_eq!(
+        err.downcast::<ContractError>().unwrap(),
+        ContractError::InvalidFunds {}
+    );
+
+    // Disable the token
+    app.execute_contract(
+        owner.clone(),
+        bridge_address.clone(),
+        &ExecuteMsg::DisableToken {
+            ticker: "TESTTOKEN".to_string(),
+        },
+        &[],
+    )
+    .unwrap();
+
+    // Try bridging disabled token
+    let err = app
+        .execute_contract(
+            user1.clone(),
+            bridge_address.clone(),
+            &ExecuteMsg::Send {
+                destination_addr: "cosmos1hubaddress".to_string(),
+            },
+            &[
+                Coin {
+                    denom: "factory/contract0/TESTTOKEN".to_string(),
+                    amount: Uint128::from(1u64),
+                },
+                Coin {
+                    denom: "untrn".to_string(),
+                    amount: Uint128::from(1u64),
+                },
+            ],
+        )
+        .unwrap_err();
+
+    assert_eq!(
+        err.downcast::<ContractError>().unwrap(),
+        ContractError::TokenDisabled {
+            ticker: "TESTTOKEN".to_string()
+        }
+    );
+
+    // TODO: The remaining part of this test will be fixed soon
+
+    // TODO: Ensure the user balance was updated
+
+    // Ensure that the total supply was reduced
+    // let res = app
+    //     .wrap()
+    //     .query_supply("factory/contract0/TESTTOKEN".to_string())
+    //     .unwrap();
+    // assert_eq!(res.amount, Uint128::from(999u64));
+}
 
 // pub struct NeutronMockModule {}
 

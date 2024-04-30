@@ -1,8 +1,7 @@
 use astroport::common::{claim_ownership, drop_ownership_proposal, propose_new_owner};
 use base64::{engine::general_purpose, Engine as _};
-use cosmwasm_std::{coin, entry_point, BankMsg, Reply, StdError, SubMsg, Uint128};
+use cosmwasm_std::{coin, entry_point, BankMsg, Coin, Reply, StdError, SubMsg, Uint128};
 use cosmwasm_std::{DepsMut, Env, MessageInfo, Response};
-use cw_utils::one_coin;
 use ed25519_dalek::{VerifyingKey, PUBLIC_KEY_LENGTH};
 
 use neutron_sdk::bindings::msg::{IbcFee, NeutronMsg};
@@ -26,16 +25,21 @@ use crate::types::{
 use crate::verifier::verify_signatures;
 use crate::{error::ContractError, state::CONFIG};
 
-/// Exposes all the execute functions available in the contract.
+/// Exposes all the execute functions available in the contract
 ///
-/// ## Execute messages
-///
-/// * **ExecuteMsg::Receive(msg)** Receives a message of type [`Cw20ReceiveMsg`] and processes
-/// it depending on the received template.
-///
-/// * **ExecuteMsg::UpdateConfig { hub_addr }** Update parameters in the Outpost contract. Only the owner is allowed to
-/// update the config
-
+/// ## Executable Messages
+/// * **ExecuteMsg::LinkToken { source_chain_id, token,signatures } ** Link and enable a CFT-20 token to be bridged
+/// * **ExecuteMsg::EnableToken { ticker}** Enable a previously disabled token to being bridged again
+/// * **ExecuteMsg::DisableToken { ticker }** Disable a token from being bridged
+/// * **ExecuteMsg::Receive { source_chain_id, transaction_hash, ticker, amount, destination_addr, signatures }** Receive CFT-20 token message from the Hub
+/// * **ExecuteMsg::Send { destination_addr }** Send CFT-20 token back to the Hub
+/// * **ExecuteMsg::RetrySend { failure_id }** Retry a failed IBC transaction, the failure IDs can be retrieved using
+/// * **ExecuteMsg::AddSigner { public_key_base64, name }** Adds a signer to the allowed list for signature verification
+/// * **ExecuteMsg::RemoveSigner { public_key_base64 }** Remove a signer from the allowed list for signature verification
+/// * **ExecuteMsg::UpdateConfig { signer_threshold, bridge_chain_id, bridge_ibc_channel, ibc_timeout_seconds }** Update the contract config
+/// * **ExecuteMsg::ProposeNewOwner { owner, expires_in }** Propose a new owner for the contract
+/// * **ExecuteMsg::DropOwnershipProposal {}** Remove the ownership transfer proposal
+/// * **ExecuteMsg::ClaimOwnership {}** Claim contract ownership
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn execute(
     deps: DepsMut<NeutronQuery>,
@@ -69,6 +73,7 @@ pub fn execute(
             signatures,
         ),
         ExecuteMsg::Send { destination_addr } => bridge_send(deps, env, info, destination_addr),
+        ExecuteMsg::RetrySend { failure_id } => retry_send(failure_id),
         ExecuteMsg::AddSigner {
             public_key_base64,
             name,
@@ -183,12 +188,6 @@ pub fn reply(
 ///
 /// If this token doesn't have a corresponding TokenFactory token one will
 /// be created using the information provided.
-///
-/// If the token already has a
-/// TokenFactory token and is currently enabled, no action is taken.
-///
-/// Lastly, if the token has a TokenFactory token but is currently disabled,
-/// it will be enabled again without any further changes
 fn link_token(
     deps: DepsMut<NeutronQuery>,
     env: Env,
@@ -366,14 +365,38 @@ fn bridge_send(
 ) -> Result<Response<NeutronMsg>, ContractError> {
     let config = CONFIG.load(deps.storage)?;
 
-    // Only a single coin is allowed to be sent
-    let bridging_coin = one_coin(&info)?;
+    // The user should be sending 2 tokens, one TokenFactory token to bridge back
+    // and NTRN for paying the IBC fees
+    let mut fee_coin = Coin::default();
+    let mut bridging_coin = Coin::default();
+
+    // Only the bridged token and NTRN must be sent
+    if info.funds.len() != 2 {
+        return Err(ContractError::InvalidFunds {});
+    }
+
+    info.funds.iter().for_each(|coin| {
+        if coin.denom == FEE_DENOM {
+            fee_coin = coin.clone();
+        }
+        if TOKEN_MAPPING.has(deps.storage, &coin.denom) {
+            bridging_coin = coin.clone();
+        }
+    });
+
+    // If either of the coins is 0, reject
+    if fee_coin.amount.is_zero() || bridging_coin.amount.is_zero() {
+        return Err(ContractError::InvalidFunds {});
+    }
 
     // Check the mapping for this token, fail if no mapping exists
     let cft20_denom = TOKEN_MAPPING.load(deps.storage, &bridging_coin.denom)?;
 
     // Check if the token is disabled
-    if DISABLED_TOKENS.has(deps.storage, &cft20_denom) {
+    // We check the CFT-20 ticker and the TokenFactory in case one is missed in the disable
+    if DISABLED_TOKENS.has(deps.storage, &cft20_denom)
+        || DISABLED_TOKENS.has(deps.storage, &bridging_coin.denom)
+    {
         return Err(ContractError::TokenDisabled {
             ticker: cft20_denom,
         });
@@ -391,15 +414,12 @@ fn bridge_send(
         info.sender
     );
 
-    // Also burn the tokens
+    // Burn the bridging token
     let burn_msg = MsgBurn {
         sender: env.contract.address.to_string(),
         burn_from_address: env.contract.address.to_string(),
-        amount: Some(bridging_coin.into()),
+        amount: Some(bridging_coin.clone().into()),
     };
-
-    // Set timeout, 10 minutes
-    let ibc_timeout_timestamp = env.block.time.plus_seconds(600);
 
     let fee = min_ntrn_ibc_fee(
         query_min_ibc_fee(deps.as_ref())
@@ -407,32 +427,65 @@ fn bridge_send(
             .min_fee,
     );
 
+    // Calculate the total fee required
+    let total_fee = fee
+        .ack_fee
+        .iter()
+        .chain(fee.recv_fee.iter())
+        .chain(fee.timeout_fee.iter())
+        .filter(|a| a.denom == FEE_DENOM)
+        .fold(Uint128::zero(), |acc, coin| acc + coin.amount);
+
+    // Ensure the user sent enough to cover the fee + 1 untrn to do the actual IBC transaction
+    let ibc_coin = coin(1u128, "untrn");
+    if total_fee > fee_coin.amount.saturating_sub(Uint128::one()) {
+        return Err(ContractError::InsufficientFunds {
+            expected: total_fee.saturating_add(Uint128::one()),
+        });
+    }
+
+    // Construct the IBC transfer message
+    // The memo is important and enables the indexer to release the tokens on
+    // the Hub's side
     let ibc_transfer = NeutronMsg::IbcTransfer {
         source_port: "transfer".to_string(),
         source_channel: config.bridge_ibc_channel,
-        // sender: env.contract.address.to_string(),
-        // TODO: Note toi auditor, please also confirm that this sender address can't be spoofed on the Hub's side
-        sender: "neutron1h2rhl4kj3cgedqqxfvjp7zlkf42al3t6dcahvf".to_string(),
-        receiver: destination_addr,
-        token: coin(1u128, "untrn"),
+        // TODO: Note to auditor, please also confirm that this sender address can't be spoofed on the Hub's side
+        sender: env.contract.address.to_string(),
+        receiver: destination_addr.clone(),
+        token: ibc_coin,
         timeout_height: RequestPacketTimeoutHeight {
             revision_number: None,
             revision_height: None,
         },
         // Neutron expects nanoseconds
         // https://github.com/neutron-org/neutron/blob/303d764b57d871749fcf7d59a67b5d3078779258/proto/transfer/v1/tx.proto#L39-L42
-        timeout_timestamp: ibc_timeout_timestamp.nanos(),
+        timeout_timestamp: env
+            .block
+            .time
+            .plus_seconds(config.ibc_timeout_seconds)
+            .nanos(),
         memo,
-        fee: fee.clone(),
+        fee,
     };
 
     let response = Response::new()
         .add_message(burn_msg)
         .add_message(ibc_transfer)
-        .add_attribute("action", "bridge_send");
-    // .add_attribute("fee", format!("{:?}", fee));
+        .add_attribute("action", "bridge_send")
+        .add_attribute("tokens", bridging_coin.to_string())
+        .add_attribute("destination", destination_addr);
 
     Ok(response)
+}
+
+/// Retry a failed IBC transaction by using the chain's failure ID
+fn retry_send(failure_id: u64) -> Result<Response<NeutronMsg>, ContractError> {
+    let msg = NeutronMsg::submit_resubmit_failure(failure_id);
+    Ok(Response::default()
+        .add_message(msg)
+        .add_attribute("action", "bridge_retry_send")
+        .add_attribute("failure_id", failure_id.to_string()))
 }
 
 /// Add a signer to the list of allowed public keys
@@ -591,9 +644,10 @@ fn update_config(
 
     CONFIG.save(deps.storage, &config)?;
 
-    Ok(Response::default())
+    Ok(Response::default().add_attribute("action", "update_config"))
 }
 
+/// Helper function to query the Neutron chain for the current minimum IBC fees
 fn min_ntrn_ibc_fee(fee: IbcFee) -> IbcFee {
     IbcFee {
         recv_fee: fee.recv_fee,
