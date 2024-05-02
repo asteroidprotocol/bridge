@@ -1,0 +1,7 @@
+{
+    "bridge_chain_id": "gaialocal-1",
+    "bridge_ibc_channel": "channel-0",
+    "ibc_timeout_seconds": 60,
+    "owner": "neutron1m9l358xunhhwds0568za49mzhvuxx9ux8xafx2",
+    "signer_threshold": 2
+}

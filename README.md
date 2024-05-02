@@ -96,6 +96,67 @@ Finally get the compatible public key for easy verification in the contract
 base64 trusted-party-ed25519pub.raw > trusted-party-ed25519pub-contract.txt
 ```
 
+## Local Development
 
+### Build contract
 
+```bash
+npx lift build
+```
 
+### Upload contact to the chain
+
+```bash
+npx lift upload asteroid-neutron-bridge
+```
+
+### Instantiate contract
+
+```bash
+npx lift instantiate asteroid-neutron-bridge
+```
+
+### Query contract
+
+#### Config
+```bash
+npx lift query -m '{"config": {}}' asteroid-neutron-bridge
+```
+
+#### Signers
+```bash
+npx lift query -m '{"signers": {}}' asteroid-neutron-bridge
+```
+
+#### Tokens
+```bash
+npx lift query -m '{"tokens": {}}' asteroid-neutron-bridge
+```
+
+### Add signers
+
+1. Generate keys for two signers to `./keys` folder
+
+```bash
+./scripts/create-keys.sh
+```
+
+2. Execute contract message
+
+```bash
+npx lift task:run add-signers asteroid-neutron-bridge
+```
+
+### Link ROIDS token
+
+```bash
+npx lift task:run link-token asteroid-neutron-bridge
+```
+
+### Generate TypeScript client
+
+```bash
+npx lift ts-gen
+```
+
+it generates TypeScript client to path defined in `[ts-gen]/out_path` section in [Lift.toml](./Lift.toml) file

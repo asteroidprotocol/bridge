@@ -1,0 +1,31 @@
+gas_price = "0.01untrn"
+account_prefix = "neutron"
+name = "bridge"
+
+[networks.local]
+chain_id = "test-1"
+network_variant = "Local"
+rpc_endpoint = "http://localhost:26657"
+
+[networks.testnet]
+chain_id = "pion-1"
+network_variant = "Shared"
+rpc_endpoint = "https://rpc-palvus.pion-1.ntrn.tech"
+
+[networks.mainnet]
+chain_id = "neutron-1"
+network_variant = "Shared"
+rpc_endpoint = "https://rpc-kralum.neutron-1.neutron.org"
+
+[accounts.test1]
+mnemonic = "banner spread envelope side kite person disagree path silver will brother under couch edit food venture squirrel civil budget number acquire point work mass"
+
+[contracts.asteroid-neutron-bridge]
+folder = "neutron-bridge"
+
+[ts-gen]
+contracts = ["asteroid-neutron-bridge"]
+out_path = '../asteroid-client/client/src/contracts'
+
+[wasm]
+optimizer_version = '0.15.1'

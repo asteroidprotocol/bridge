@@ -1,1 +1,8 @@
 target
+artifacts
+
+node_modules
+
+.lift/state.local.json
+
+/keys
