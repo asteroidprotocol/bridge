@@ -1,34 +1,27 @@
 import { contractTask, logTransaction } from "@asteroid-protocol/lift";
-import { readFile } from "fs/promises";
-import crypto from "crypto";
+import { signMessage } from "./src/utils.js";
+import {
+  SOURCE_CHAIN_ID,
+  DESTINATION_CHAIN_ID,
+  TICKER,
+} from "./src/constants.js";
 
 contractTask(async (context, contract) => {
   const token = {
     decimals: 6,
     image_url: "",
     name: "Asteroids",
-    ticker: "ROIDS",
+    ticker: TICKER,
   };
-  const sourceChainId = "gaialocal-1";
-  const destinationChainId = "test-1";
 
-  const message = `${sourceChainId}${token.ticker}${token.decimals}${destinationChainId}${contract.address}`;
+  const message = `${SOURCE_CHAIN_ID}${token.ticker}${token.decimals}${DESTINATION_CHAIN_ID}${contract.address}`;
 
-  const key1 = await readFile("keys/trusted-party-1-ed25519priv.pem", "utf8");
-  const signature1 = crypto.sign(null, Buffer.from(message), key1);
-
-  const key2 = await readFile("keys/trusted-party-2-ed25519priv.pem", "utf8");
-  const signature2 = crypto.sign(null, Buffer.from(message), key2);
-
-  const signatures = [
-    signature1.toString("base64"),
-    signature2.toString("base64"),
-  ];
+  const signatures = await signMessage(message);
 
   const res = await contract.execute({
     link_token: {
       signatures,
-      source_chain_id: sourceChainId,
+      source_chain_id: SOURCE_CHAIN_ID,
       token,
     },
   });
