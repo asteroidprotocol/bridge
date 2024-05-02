@@ -157,7 +157,7 @@ npx lift task:run link-token asteroid-neutron-bridge
 
 ```bash
 npx lift task:run receive -h B22E5E960E09C7AC0B8DA054DFC6BD3FA97113B021379405752990E31403A149 -m 100 -d neutron10h9stc5v6ntgeygf5xf945njqq5h32r54rf7kf asteroid-neutron-bridge
-``
+```
 
 Check balances
 
