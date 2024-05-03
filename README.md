@@ -52,7 +52,17 @@ b. The bridge contract is only connected to the Cosmos Hub and will initiate an 
 
 c. Once the IBC transaction arrives on the Hub, the indexers will pick it up, and if valid, release the CFT-20 tokens to the destination address
 
+**Handling IBC failures**
 
+Neutron makes it possible for a contract to know about the state of an IBC token transfer, it is handled using a combination of submessages and sudo messages. The process is handles as follows:
+
+a. The IBC transfer is executed as a submessage
+
+b. In the submessage reply the IBC channel and sequence is captured and used as the key to store the CFT-20 assets being bridged back
+
+c. In the sudo handler the IBC channel and sequence is used to load the corresponding assets being transferred
+
+d. If the IBC transfer succeeded the record can be removed, in case of failures the record is used to mint and return the original assets back to the sender
 
 ## Signers / Indexers
 
