@@ -1,28 +1,31 @@
 use astroport::common::{claim_ownership, drop_ownership_proposal, propose_new_owner};
 use base64::{engine::general_purpose, Engine as _};
-use cosmwasm_std::{coin, entry_point, BankMsg, Coin, Reply, StdError, SubMsg, Uint128};
+use cosmwasm_std::{
+    coin, entry_point, Coin, CosmosMsg, Reply, StdError, StdResult, SubMsg, Uint128,
+};
 use cosmwasm_std::{DepsMut, Env, MessageInfo, Response};
 use ed25519_dalek::{VerifyingKey, PUBLIC_KEY_LENGTH};
 
-use neutron_sdk::bindings::msg::{IbcFee, NeutronMsg};
+use neutron_sdk::bindings::msg::{IbcFee, MsgIbcTransferResponse, NeutronMsg};
 use neutron_sdk::bindings::query::NeutronQuery;
 use neutron_sdk::query::min_ibc_fee::query_min_ibc_fee;
 use neutron_sdk::sudo::msg::RequestPacketTimeoutHeight;
 use osmosis_std::types::cosmos::bank::v1beta1::{DenomUnit, Metadata};
 use osmosis_std::types::osmosis::tokenfactory::v1beta1::{
-    MsgBurn, MsgCreateDenom, MsgCreateDenomResponse, MsgMint, MsgSetDenomMetadata,
+    MsgBurn, MsgCreateDenom, MsgCreateDenomResponse, MsgSetDenomMetadata,
 };
 
+use crate::helpers::{build_mint_messages, verify_signatures};
 use crate::msg::ExecuteMsg;
 use crate::state::{
-    DISABLED_TOKENS, HANDLED_TRANSACTIONS, OWNERSHIP_PROPOSAL, SIGNERS, TOKEN_MAPPING,
-    TOKEN_METADATA,
+    BRIDGE_CURRENT_PAYLOAD, BRIDGE_INFLIGHT, DISABLED_TOKENS, HANDLED_TRANSACTIONS,
+    OWNERSHIP_PROPOSAL, SIGNERS, TOKEN_MAPPING, TOKEN_METADATA,
 };
 use crate::types::{
-    Config, TokenMetadata, FEE_DENOM, INSTANTIATE_DENOM_REPLY_ID, MAX_IBC_TIMEOUT_SECONDS,
-    MIN_IBC_TIMEOUT_SECONDS, MIN_SIGNER_THRESHOLD,
+    BridgingAsset, Config, TokenMetadata, FEE_DENOM, IBC_REPLY_HANDLER_ID,
+    INSTANTIATE_DENOM_REPLY_ID, MAX_IBC_TIMEOUT_SECONDS, MIN_IBC_TIMEOUT_SECONDS,
+    MIN_SIGNER_THRESHOLD,
 };
-use crate::verifier::verify_signatures;
 use crate::{error::ContractError, state::CONFIG};
 
 /// Exposes all the execute functions available in the contract
@@ -33,7 +36,6 @@ use crate::{error::ContractError, state::CONFIG};
 /// * **ExecuteMsg::DisableToken { ticker }** Disable a token from being bridged
 /// * **ExecuteMsg::Receive { source_chain_id, transaction_hash, ticker, amount, destination_addr, signatures }** Receive CFT-20 token message from the Hub
 /// * **ExecuteMsg::Send { destination_addr }** Send CFT-20 token back to the Hub
-/// * **ExecuteMsg::RetrySend { failure_id }** Retry a failed IBC transaction, the failure IDs can be retrieved using
 /// * **ExecuteMsg::AddSigner { public_key_base64, name }** Adds a signer to the allowed list for signature verification
 /// * **ExecuteMsg::RemoveSigner { public_key_base64 }** Remove a signer from the allowed list for signature verification
 /// * **ExecuteMsg::UpdateConfig { signer_threshold, bridge_chain_id, bridge_ibc_channel, ibc_timeout_seconds }** Update the contract config
@@ -73,7 +75,6 @@ pub fn execute(
             signatures,
         ),
         ExecuteMsg::Send { destination_addr } => bridge_send(deps, env, info, destination_addr),
-        ExecuteMsg::RetrySend { failure_id } => retry_send(failure_id),
         ExecuteMsg::AddSigner {
             public_key_base64,
             name,
@@ -179,6 +180,32 @@ pub fn reply(
                 // .add_message(denom_metadata_msg)
                 .add_attribute("action", "set_denom_metadata")
                 .add_attribute("ticker", metadata.ticker))
+        }
+        IBC_REPLY_HANDLER_ID => {
+            // Extract the channel and sequence ID from the IBC transfer
+            let resp: MsgIbcTransferResponse = serde_json_wasm::from_slice(
+                msg.result
+                    .into_result()
+                    .map_err(StdError::generic_err)?
+                    .data
+                    .ok_or_else(|| StdError::generic_err("no result"))?
+                    .as_slice(),
+            )
+            .map_err(|e| StdError::generic_err(format!("failed to parse response: {:?}", e)))?;
+            let sequence_id = resp.sequence_id;
+            let channel_id = resp.channel;
+
+            // In order to handle the success/failure sudo call for IBC transfers
+            // we need to capture the CFT-20 assets being bridged back
+            // If it fails, the tokens need to be minted and returned again
+            let payload = BRIDGE_CURRENT_PAYLOAD.load(deps.storage)?;
+            BRIDGE_INFLIGHT.save(deps.storage, (&channel_id.clone(), sequence_id), &payload)?;
+            BRIDGE_CURRENT_PAYLOAD.remove(deps.storage);
+
+            Ok(Response::new()
+                .add_attribute("action", "capture_ibc_transfer")
+                .add_attribute("channel", channel_id)
+                .add_attribute("sequence", sequence_id.to_string()))
         }
         _ => Err(ContractError::InvalidReplyId { id: msg.id }),
     }
@@ -335,22 +362,14 @@ fn bridge_receive(
     // If ticker already exists, mint new tokens to the destination
     let coins_to_mint = coin(amount.u128(), tokenfactory_denom);
 
-    // TokenFactory can only mint to the admin for now
-    let mint_msg = MsgMint {
-        sender: env.contract.address.to_string(),
-        amount: Some(coins_to_mint.clone().into()),
-        mint_to_address: env.contract.address.to_string(),
-    };
-
-    // Once minted to self, transfer to destination
-    let mint_transfer = BankMsg::Send {
-        to_address: destination_addr.clone(),
-        amount: vec![coins_to_mint.clone()],
-    };
+    let mint_messages = build_mint_messages(
+        env.contract.address.to_string(),
+        coins_to_mint.clone(),
+        destination_addr.clone(),
+    );
 
     Ok(Response::default()
-        .add_message(mint_msg)
-        .add_message(mint_transfer)
+        .add_messages(mint_messages)
         .add_attribute("action", "bridge_receive")
         .add_attribute("tokens", coins_to_mint.to_string())
         .add_attribute("destination", destination_addr))
@@ -465,27 +484,29 @@ fn bridge_send(
             .time
             .plus_seconds(config.ibc_timeout_seconds)
             .nanos(),
-        memo,
+        memo: memo.clone(),
         fee,
     };
 
+    // Capture the inflight asset to track the bridging to be able to handle the
+    // IBC failures
+    let inflight = BridgingAsset {
+        sender: info.sender,
+        funds: bridging_coin.clone(),
+    };
+    BRIDGE_CURRENT_PAYLOAD.save(deps.storage, &inflight)?;
+
+    // Set up the submessage to capture the channel and sequence for the IBC transfer
+    let ibc_transfer_submessage = SubMsg::reply_on_success(ibc_transfer, IBC_REPLY_HANDLER_ID);
+
     let response = Response::new()
         .add_message(burn_msg)
-        .add_message(ibc_transfer)
+        .add_submessage(ibc_transfer_submessage)
         .add_attribute("action", "bridge_send")
         .add_attribute("tokens", bridging_coin.to_string())
         .add_attribute("destination", destination_addr);
 
     Ok(response)
-}
-
-/// Retry a failed IBC transaction by using the chain's failure ID
-fn retry_send(failure_id: u64) -> Result<Response<NeutronMsg>, ContractError> {
-    let msg = NeutronMsg::submit_resubmit_failure(failure_id);
-    Ok(Response::default()
-        .add_message(msg)
-        .add_attribute("action", "bridge_retry_send")
-        .add_attribute("failure_id", failure_id.to_string()))
 }
 
 /// Add a signer to the list of allowed public keys

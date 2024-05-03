@@ -1,6 +1,8 @@
 use base64::{engine::general_purpose, Engine as _};
-use cosmwasm_std::{Deps, Order};
-use neutron_sdk::bindings::query::NeutronQuery;
+use cosmwasm_std::{BankMsg, Coin, CosmosMsg, Deps, Order};
+use neutron_sdk::bindings::{msg::NeutronMsg, query::NeutronQuery};
+use osmosis_std::types::osmosis::tokenfactory::v1beta1::MsgMint;
+// use osmosis_std::types::osmosis::tokenfactory::v1beta1::MsgMint;
 
 use crate::{
     error::ContractError,
@@ -73,4 +75,27 @@ pub fn verify_signatures(
     }
     // If we reach this point, we did not have enough valid signatures
     Err(ContractError::ThresholdNotMet {})
+}
+
+/// Construct messages to mint and transfer TokenFactory tokens
+/// TokenFactory tokens must always be minted by the contract address
+pub fn build_mint_messages(
+    contract_address: String,
+    coin: Coin,
+    destination: String,
+) -> Vec<CosmosMsg<NeutronMsg>> {
+    // TokenFactory can only mint to the sender
+    let mint_msg = MsgMint {
+        sender: contract_address.clone(),
+        amount: Some(coin.clone().into()),
+        mint_to_address: contract_address,
+    };
+
+    // Once minted to self, transfer to destination
+    let mint_transfer = BankMsg::Send {
+        to_address: destination,
+        amount: vec![coin.clone()],
+    };
+
+    vec![mint_msg.into(), mint_transfer.into()]
 }

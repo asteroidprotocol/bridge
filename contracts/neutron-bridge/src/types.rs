@@ -1,5 +1,5 @@
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::Addr;
+use cosmwasm_std::{Addr, Coin};
 
 // Minimum IBC timeout is 5 seconds
 pub const MIN_IBC_TIMEOUT_SECONDS: u64 = 5;
@@ -11,6 +11,8 @@ pub const FEE_DENOM: &str = "untrn";
 pub const MIN_SIGNER_THRESHOLD: u8 = 2;
 // The reply ID for the instantiate_denom reply when linking a token
 pub const INSTANTIATE_DENOM_REPLY_ID: u64 = 1;
+// The reply ID for IBC transfer to capture the channel and sequence
+pub const IBC_REPLY_HANDLER_ID: u64 = 2;
 
 #[cw_serde]
 pub struct Config {
@@ -49,4 +51,12 @@ pub struct QuerySignersResponse {
 pub struct QueryTokensResponse {
     /// The list of token denoms allowed in bridging
     pub tokens: Vec<String>,
+}
+
+#[cw_serde]
+pub struct BridgingAsset {
+    // pub channel_id: String,
+    // pub sequence: u64,
+    pub sender: Addr,
+    pub funds: Coin,
 }
