@@ -1,8 +1,6 @@
 use astroport::common::{claim_ownership, drop_ownership_proposal, propose_new_owner};
 use base64::{engine::general_purpose, Engine as _};
-use cosmwasm_std::{
-    coin, entry_point, Coin, CosmosMsg, Reply, StdError, StdResult, SubMsg, Uint128,
-};
+use cosmwasm_std::{coin, entry_point, Coin, Reply, StdError, SubMsg, Uint128};
 use cosmwasm_std::{DepsMut, Env, MessageInfo, Response};
 use ed25519_dalek::{VerifyingKey, PUBLIC_KEY_LENGTH};
 
@@ -140,7 +138,6 @@ pub fn reply(
 
             let metadata = TOKEN_METADATA.load(deps.storage)?;
 
-            // TODO: Add back setting denom metadata after figuring out test
             let denom_metadata_msg = MsgSetDenomMetadata {
                 sender: env.contract.address.to_string(),
                 metadata: Some(Metadata {
@@ -176,8 +173,7 @@ pub fn reply(
             TOKEN_METADATA.remove(deps.storage);
 
             Ok(Response::new()
-                // TODO: Add back setting denom metadata after figuring out test
-                // .add_message(denom_metadata_msg)
+                .add_message(denom_metadata_msg)
                 .add_attribute("action", "set_denom_metadata")
                 .add_attribute("ticker", metadata.ticker))
         }
@@ -407,6 +403,11 @@ fn bridge_send(
     if fee_coin.amount.is_zero() || bridging_coin.amount.is_zero() {
         return Err(ContractError::InvalidFunds {});
     }
+
+    deps.api.debug(&format!(
+        "funds sent: {:?}",
+        info.funds.iter().collect::<Vec<_>>()
+    ));
 
     // Check the mapping for this token, fail if no mapping exists
     let cft20_denom = TOKEN_MAPPING.load(deps.storage, &bridging_coin.denom)?;
@@ -682,5 +683,139 @@ fn min_ntrn_ibc_fee(fee: IbcFee) -> IbcFee {
             .into_iter()
             .filter(|a| a.denom == FEE_DENOM)
             .collect(),
+    }
+}
+
+#[cfg(test)]
+mod testing {
+    use std::marker::PhantomData;
+
+    use cosmwasm_std::testing::{mock_env, mock_info, MockApi, MockQuerier, MockStorage};
+    use cosmwasm_std::{
+        coins, to_json_binary, ContractResult, CosmosMsg, OwnedDeps, SubMsg, SystemResult,
+    };
+    use neutron_sdk::query::min_ibc_fee::MinIbcFeeResponse;
+
+    use crate::contract::instantiate;
+    use crate::msg::InstantiateMsg;
+
+    use super::*;
+
+    pub const OWNER: &str = "owner";
+    pub const NOT_OWNER: &str = "not_owner";
+    pub const USER: &str = "cosmos_user";
+
+    fn mock_neutron_dependencies(
+        balances: &[(&str, &[Coin])],
+    ) -> OwnedDeps<MockStorage, MockApi, MockQuerier<NeutronQuery>, NeutronQuery> {
+        let neutron_custom_handler = |request: &NeutronQuery| {
+            let contract_result: ContractResult<_> = match request {
+                NeutronQuery::MinIbcFee {} => to_json_binary(&MinIbcFeeResponse {
+                    min_fee: IbcFee {
+                        recv_fee: vec![],
+                        ack_fee: coins(100_000, FEE_DENOM),
+                        timeout_fee: coins(100_000, FEE_DENOM),
+                    },
+                })
+                .into(),
+                _ => unimplemented!("Unsupported query request: {:?}", request),
+            };
+            SystemResult::Ok(contract_result)
+        };
+
+        OwnedDeps {
+            storage: MockStorage::default(),
+            api: MockApi::default(),
+            querier: MockQuerier::new(balances).with_custom_handler(neutron_custom_handler),
+            custom_query_type: PhantomData,
+        }
+    }
+
+    #[test]
+    fn test_bridge_send() {
+        let mut deps = mock_neutron_dependencies(&[]);
+        let env = mock_env();
+
+        let info = mock_info(OWNER, &[]);
+
+        instantiate(
+            deps.as_mut(),
+            env.clone(),
+            info.clone(),
+            InstantiateMsg {
+                owner: OWNER.to_string(),
+                bridge_chain_id: "localgaia-1".to_string(),
+                bridge_ibc_channel: "channel-1".to_string(),
+                ibc_timeout_seconds: 300,
+                signer_threshold: 2,
+            },
+        )
+        .unwrap();
+
+        TOKEN_MAPPING
+            .save(
+                deps.as_mut().storage,
+                "TESTTOKEN",
+                &"factory/contract0/TESTTOKEN".to_string(),
+            )
+            .unwrap();
+
+        TOKEN_MAPPING
+            .save(
+                deps.as_mut().storage,
+                "factory/contract0/TESTTOKEN",
+                &"TESTTOKEN".to_string(),
+            )
+            .unwrap();
+
+        // Test with correct funds
+        let info = mock_info(
+            NOT_OWNER,
+            &[
+                Coin {
+                    denom: "factory/contract0/TESTTOKEN".to_string(),
+                    amount: Uint128::from(100u64),
+                },
+                Coin {
+                    denom: "untrn".to_string(),
+                    amount: Uint128::from(200_001u64),
+                },
+            ],
+        );
+        let response =
+            bridge_send(deps.as_mut(), mock_env(), info.clone(), USER.to_owned()).unwrap();
+
+        // Verify the tokens are burned
+        assert_eq!(
+            response.messages[0],
+            SubMsg::new(MsgBurn {
+                sender: env.contract.address.to_string(),
+                burn_from_address: env.contract.address.to_string(),
+                amount: Some(osmosis_std::types::cosmos::base::v1beta1::Coin {
+                    denom: "factory/contract0/TESTTOKEN".to_string(),
+                    amount: "100".to_string(),
+                }),
+            }),
+        );
+
+        // Verify the memo sent is correct
+        assert_eq!(response.messages[1].msg,CosmosMsg::Custom(NeutronMsg::IbcTransfer {
+                    source_port: "transfer".to_string(),
+                    source_channel: "channel-1".to_string(),
+                    sender: env.contract.address.to_string(),
+                    receiver: USER.to_string(),
+                    token: coin(1, "untrn"),
+                    timeout_height: RequestPacketTimeoutHeight {
+                        revision_number: None,
+                        revision_height: None,
+                    },
+                    timeout_timestamp: env.block.time.plus_seconds(300).nanos(),
+                    memo: "urn:bridge:localgaia-1@v1;recv$tic=TESTTOKEN,amt=100,dst=cosmos_user,rch=cosmos-testnet-14002,src=not_owner".to_string(),
+                    fee: IbcFee {
+                        recv_fee: vec![],
+                        ack_fee: coins(100_000, FEE_DENOM),
+                        timeout_fee: coins(100_000, FEE_DENOM),
+                    },
+                }))
     }
 }

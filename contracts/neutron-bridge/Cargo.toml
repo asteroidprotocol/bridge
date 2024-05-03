@@ -45,6 +45,10 @@ anyhow = "1.0"
 astroport-test = { git = "https://github.com/astroport-fi/hidden_astroport_core", branch = "feat/lp-tokenfactory", features = [
     "cosmwasm_1_1",
 ] }
-cw-multi-test = { git = "https://github.com/astroport-fi/cw-multi-test", branch = "feat/bank_with_send_hooks", features = [
+# cw-multi-test = { git = "https://github.com/astroport-fi/cw-multi-test", branch = "feat/bank_with_send_hooks", features = [
+#     "cosmwasm_1_1",
+# ] }
+
+cw-multi-test = { git = "https://github.com/astroport-fi/cw-multi-test", branch = "feat/bank_with_send_hooks_1_0", features = [
     "cosmwasm_1_1",
 ] }

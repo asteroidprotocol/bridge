@@ -1,6 +1,5 @@
-use astroport::generator::MigrateMsg;
 use cosmwasm_std::{entry_point, DepsMut, Env, MessageInfo, Response};
-use cw2::{get_contract_version, set_contract_version};
+use cw2::set_contract_version;
 
 use neutron_sdk::bindings::msg::NeutronMsg;
 use neutron_sdk::bindings::query::NeutronQuery;
@@ -77,14 +76,4 @@ pub fn instantiate(
         .add_attribute("action", "instantiate")
         .add_attribute("bridge_chain_id", msg.bridge_chain_id)
         .add_attribute("bridge_ibc_channel", msg.bridge_ibc_channel))
-}
-
-#[cfg_attr(not(feature = "library"), entry_point)]
-pub fn migrate(deps: DepsMut, _env: Env, _msg: MigrateMsg) -> Result<Response, ContractError> {
-    let contract_version = get_contract_version(deps.storage)?;
-    set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
-    Ok(Response::default()
-        .add_attribute("action", "migrate")
-        .add_attribute("old_version", contract_version.version)
-        .add_attribute("new_version", CONTRACT_VERSION))
 }

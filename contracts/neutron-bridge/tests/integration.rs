@@ -8,10 +8,12 @@ use asteroid_neutron_bridge::types::{
     MIN_IBC_TIMEOUT_SECONDS, MIN_SIGNER_THRESHOLD,
 };
 use astroport_test::cw_multi_test::{AppBuilder, Contract, ContractWrapper, Executor};
-use astroport_test::modules::stargate::{MockStargate, StargateApp};
+// use astroport_test::modules::stargate::{MockStargate, StargateApp};
 use cosmwasm_std::{Addr, Coin, Uint128};
 use neutron_sdk::bindings::msg::NeutronMsg;
 use neutron_sdk::bindings::query::NeutronQuery;
+
+use crate::stargate::{MockStargate, StargateApp};
 
 type NeutronApp = StargateApp<NeutronMsg, NeutronQuery>;
 
@@ -30,16 +32,11 @@ const BRIDGE_SIGNATURE_1: &str =
 const BRIDGE_SIGNATURE_2: &str =
     "+Y5UhcFimBzBnJX8BIFZPR2DjUp3DaYVRF81osV/qx8E4gDWk3z1EtUsLX3oITTld0lc12IQGdpuFcCWDAMVAQ==";
 
+mod stargate;
+
 fn mock_app(owner: &Addr, coins: Vec<Coin>) -> NeutronApp {
     AppBuilder::new_custom()
-        // .with_stargate(StargateKeeper::default())
-        // .with_custom(NeutronMockModule::new())
         .with_stargate(MockStargate::default())
-        // .with_custom(custom)
-        // .with_custom(NeutronMockModule::new())
-        // .with_wasm::<FailingModule<NeutronMsg, NeutronQuery, Empty>, WasmKeeper<_, _>>(
-        //     WasmKeeper::new(),
-        // )
         .build(|router, _, storage| {
             // initialization moved to App construction
             router.bank.init_balance(storage, owner, coins).unwrap()
@@ -1085,8 +1082,6 @@ fn test_enable_disable_token() {
         .unwrap();
 
     assert_eq!(response.tokens.len(), 0);
-
-    // TODO: Test bridging with disabled token
 }
 
 #[test]
@@ -1397,8 +1392,8 @@ fn test_bridge_receive() {
     );
 }
 
-// TODO The Full bridge send test is currently not available due to custom Neutron queries
-// that need to be implemented
+// This test is partial, the rest is tested in a unit test to
+// verify IBC interactions
 #[test]
 fn test_bridge_send() {
     let owner = Addr::unchecked("owner");
@@ -1629,116 +1624,4 @@ fn test_bridge_send() {
             ticker: "TESTTOKEN".to_string()
         }
     );
-
-    // TODO: The remaining part of this test will be fixed soon
-
-    // TODO: Ensure the user balance was updated
-
-    // Ensure that the total supply was reduced
-    // let res = app
-    //     .wrap()
-    //     .query_supply("factory/contract0/TESTTOKEN".to_string())
-    //     .unwrap();
-    // assert_eq!(res.amount, Uint128::from(999u64));
 }
-
-// pub struct NeutronMockModule {}
-
-// impl NeutronMockModule {
-//     pub fn new() -> Self {
-//         Self {}
-//     }
-// }
-
-// impl Module for NeutronMockModule {
-//     type ExecT = NeutronMsg;
-//     type QueryT = NeutronQuery;
-//     type SudoT = Empty;
-
-//     fn execute<ExecC, QueryC>(
-//         &self,
-//         api: &dyn Api,
-//         storage: &mut dyn Storage,
-//         router: &dyn CosmosRouter<ExecC = ExecC, QueryC = QueryC>,
-//         block: &BlockInfo,
-//         _sender: Addr,
-//         msg: Self::ExecT,
-//     ) -> AnyResult<AppResponse>
-//     where
-//         ExecC: Debug + Clone + PartialEq + JsonSchema + DeserializeOwned + 'static,
-//         QueryC: CustomQuery + DeserializeOwned + 'static,
-//     {
-//         unimplemented!("not implemented")
-//     }
-
-//     fn sudo<ExecC, QueryC>(
-//         &self,
-//         _api: &dyn Api,
-//         _storage: &mut dyn Storage,
-//         _router: &dyn CosmosRouter<ExecC = ExecC, QueryC = QueryC>,
-//         _block: &BlockInfo,
-//         _msg: Self::SudoT,
-//     ) -> AnyResult<AppResponse>
-//     where
-//         ExecC: Debug + Clone + PartialEq + JsonSchema + DeserializeOwned + 'static,
-//         QueryC: CustomQuery + DeserializeOwned + 'static,
-//     {
-//         unimplemented!("not implemented")
-//     }
-
-//     fn query(
-//         &self,
-//         _api: &dyn Api,
-//         _storage: &dyn Storage,
-//         _querier: &dyn Querier,
-//         _block: &BlockInfo,
-//         request: Self::QueryT,
-//     ) -> AnyResult<Binary> {
-//         match request {
-//             NeutronQuery::MinIbcFee {} => Ok(to_json_binary(&MinIbcFeeResponse {
-//                 min_fee: IbcFee {
-//                     ack_fee: [Coin {
-//                         denom: "untrn".to_string(),
-//                         amount: 1u128.into(),
-//                     }]
-//                     .to_vec(),
-//                     recv_fee: [Coin {
-//                         denom: "untrn".to_string(),
-//                         amount: 1u128.into(),
-//                     }]
-//                     .to_vec(),
-//                     timeout_fee: [Coin {
-//                         denom: "untrn".to_string(),
-//                         amount: 1u128.into(),
-//                     }]
-//                     .to_vec(),
-//                 },
-//             })?),
-//             // InjectiveQuery::SpotMarket { market_id } => {
-//             //     // let markets = self.markets.borrow();
-//             //     // if let Some((base_denom, quote_denom)) = markets.get(&market_id) {
-//             //     //     // TODO: save min_quantity_tick_size and min_price_tick_size somewhere if needed
-//             //     //     // as currently they are hardcoded
-//             //     //     Ok(to_json_binary(&SpotMarketResponse {
-//             //     //         market: Some(SpotMarket {
-//             //     //             ticker: base_denom.to_string() + "/" + quote_denom,
-//             //     //             market_id,
-//             //     //             min_quantity_tick_size: 1000000000000000u128.into(), // from the real INJ/USDT market, 0.001 INJ
-//             //     //             base_denom: base_denom.clone(),
-//             //     //             quote_denom: quote_denom.clone(),
-//             //     //             status: Default::default(),
-//             //     //             min_price_tick_size: f64_to_dec::<Decimal256>(0.000000000000001)
-//             //     //                 .conv()?, // 0.000000000000001
-//             //     //             maker_fee_rate: Default::default(),
-//             //     //             taker_fee_rate: Default::default(),
-//             //     //             relayer_fee_share_rate: Default::default(),
-//             //     //         }),
-//             //     //     })?)
-//             //     // } else {
-//             //     //     Ok(to_json_binary(&SpotMarketResponse { market: None })?)
-//             //     // }
-//             // }
-//             _ => unimplemented!("not implemented"),
-//         }
-//     }
-// }
