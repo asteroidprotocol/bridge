@@ -37,6 +37,7 @@ osmosis-std = "0.21"
 neutron-sdk = "0.8"
 astroport = "3.11.1"
 ed25519-dalek = "2"
+serde-json-wasm = "1.0.1"
 
 [dev-dependencies]
 # cw-multi-test = "0.16.5"

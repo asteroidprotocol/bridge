@@ -54,7 +54,7 @@ c. Once the IBC transaction arrives on the Hub, the indexers will pick it up, an
 
 **Handling IBC failures**
 
-Neutron makes it possible for a contract to know about the state of an IBC token transfer, it is handled using a combination of submessages and sudo messages. The process is handles as follows:
+Neutron makes it possible for a contract to know about the state of an IBC token transfer, it is handled using a combination of submessages and sudo messages. The process is handled as follows:
 
 a. The IBC transfer is executed as a submessage
 
