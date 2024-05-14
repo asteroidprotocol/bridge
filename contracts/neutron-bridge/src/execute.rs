@@ -261,7 +261,10 @@ fn enable_token(
         });
     }
 
+    // We need to enable both the CFT-20 ticker and the TokenFactory denom
+    let matching_denom = TOKEN_MAPPING.load(deps.storage, &ticker)?;
     DISABLED_TOKENS.remove(deps.storage, &ticker);
+    DISABLED_TOKENS.remove(deps.storage, &matching_denom);
 
     Ok(Response::new()
         .add_attribute("action", "enable_token")
@@ -286,8 +289,10 @@ fn disable_token(
     if !TOKEN_MAPPING.has(deps.storage, &ticker) {
         return Err(ContractError::TokenDoesNotExist { ticker });
     }
-
+    // We need to disable both the CFT-20 ticker and the TokenFactory denom
+    let matching_denom = TOKEN_MAPPING.load(deps.storage, &ticker)?;
     DISABLED_TOKENS.save(deps.storage, &ticker, &true)?;
+    DISABLED_TOKENS.save(deps.storage, &matching_denom, &true)?;
 
     Ok(Response::new()
         .add_attribute("action", "disable_token")
@@ -403,10 +408,7 @@ fn bridge_send(
     let cft20_denom = TOKEN_MAPPING.load(deps.storage, &bridging_coin.denom)?;
 
     // Check if the token is disabled
-    // We check the CFT-20 ticker and the TokenFactory in case one is missed in the disable
-    if DISABLED_TOKENS.has(deps.storage, &cft20_denom)
-        || DISABLED_TOKENS.has(deps.storage, &bridging_coin.denom)
-    {
+    if DISABLED_TOKENS.has(deps.storage, &cft20_denom) {
         return Err(ContractError::TokenDisabled {
             ticker: cft20_denom,
         });

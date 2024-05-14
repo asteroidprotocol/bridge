@@ -936,7 +936,8 @@ fn test_enable_disable_token() {
         )
         .unwrap();
 
-    assert_eq!(response.tokens.len(), 1);
+    // Ensure both sides are disabled, making the count 2
+    assert_eq!(response.tokens.len(), 2);
 
     // Enable a token from wrong account
     let err = app
@@ -978,6 +979,7 @@ fn test_enable_disable_token() {
         )
         .unwrap();
 
+    // Both sides should be enabled, making the disabled tokens 0
     assert_eq!(response.tokens.len(), 0);
 }
 
