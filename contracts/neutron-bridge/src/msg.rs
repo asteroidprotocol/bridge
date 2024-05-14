@@ -19,7 +19,10 @@ pub struct InstantiateMsg {
 /// The contract migration message
 /// We currently take no arguments for migrations
 #[cw_serde]
-pub struct MigrateMsg {}
+pub struct MigrateMsg {
+    /// The chain ID this bridge is connected to
+    pub bridge_chain_id: Option<String>,
+}
 
 /// Describes the execute messages available in the contract
 #[cw_serde]
@@ -79,9 +82,7 @@ pub enum ExecuteMsg {
     },
     /// Update the contract config
     UpdateConfig {
-        /// The chain ID this bridge is connected to
-        bridge_chain_id: Option<String>,
-        /// The new IBC channel to the Cosmos Hub to use
+        /// The IBC channel to the Cosmos Hub
         bridge_ibc_channel: Option<String>,
         /// The timeout in seconds for IBC packets
         ibc_timeout_seconds: Option<u64>,

@@ -424,7 +424,6 @@ fn test_update_config() {
             not_owner.clone(),
             bridge_address.clone(),
             &ExecuteMsg::UpdateConfig {
-                bridge_chain_id: None,
                 bridge_ibc_channel: None,
                 ibc_timeout_seconds: None,
             },
@@ -441,7 +440,6 @@ fn test_update_config() {
         owner.clone(),
         bridge_address.clone(),
         &ExecuteMsg::UpdateConfig {
-            bridge_chain_id: None,
             bridge_ibc_channel: None,
             ibc_timeout_seconds: None,
         },
@@ -449,32 +447,10 @@ fn test_update_config() {
     )
     .unwrap();
 
-    // Attempt blank chain ID
-    let err = app
-        .execute_contract(
-            owner.clone(),
-            bridge_address.clone(),
-            &ExecuteMsg::UpdateConfig {
-                bridge_chain_id: Some("".to_string()),
-                bridge_ibc_channel: None,
-                ibc_timeout_seconds: None,
-            },
-            &[],
-        )
-        .unwrap_err();
-
-    assert_eq!(
-        err.downcast::<ContractError>().unwrap(),
-        ContractError::InvalidConfiguration {
-            reason: "The source chain ID must be specified".to_string()
-        }
-    );
-
     app.execute_contract(
         owner.clone(),
         bridge_address.clone(),
         &ExecuteMsg::UpdateConfig {
-            bridge_chain_id: Some("newgaia-1".to_string()),
             bridge_ibc_channel: None,
             ibc_timeout_seconds: None,
         },
@@ -488,7 +464,6 @@ fn test_update_config() {
             owner.clone(),
             bridge_address.clone(),
             &ExecuteMsg::UpdateConfig {
-                bridge_chain_id: None,
                 bridge_ibc_channel: Some("".to_string()),
                 ibc_timeout_seconds: None,
             },
@@ -507,7 +482,6 @@ fn test_update_config() {
         owner.clone(),
         bridge_address.clone(),
         &ExecuteMsg::UpdateConfig {
-            bridge_chain_id: None,
             bridge_ibc_channel: Some("channel-9".to_string()),
             ibc_timeout_seconds: None,
         },
@@ -521,7 +495,6 @@ fn test_update_config() {
             owner.clone(),
             bridge_address.clone(),
             &ExecuteMsg::UpdateConfig {
-                bridge_chain_id: None,
                 bridge_ibc_channel: None,
                 ibc_timeout_seconds: Some(MIN_IBC_TIMEOUT_SECONDS - 1),
             },
@@ -543,7 +516,6 @@ fn test_update_config() {
             owner.clone(),
             bridge_address.clone(),
             &ExecuteMsg::UpdateConfig {
-                bridge_chain_id: None,
                 bridge_ibc_channel: None,
                 ibc_timeout_seconds: Some(MAX_IBC_TIMEOUT_SECONDS + 1),
             },
@@ -564,7 +536,6 @@ fn test_update_config() {
         owner.clone(),
         bridge_address.clone(),
         &ExecuteMsg::UpdateConfig {
-            bridge_chain_id: None,
             bridge_ibc_channel: None,
             ibc_timeout_seconds: Some(MIN_IBC_TIMEOUT_SECONDS + 1),
         },
@@ -578,7 +549,7 @@ fn test_update_config() {
         .query_wasm_smart(&bridge_address, &QueryMsg::Config {})
         .unwrap();
 
-    assert_eq!(response.bridge_chain_id, "newgaia-1");
+    assert_eq!(response.bridge_chain_id, "localgaia-1");
     assert_eq!(response.bridge_ibc_channel, "channel-9");
     assert_eq!(response.ibc_timeout_seconds, MIN_IBC_TIMEOUT_SECONDS + 1);
 }

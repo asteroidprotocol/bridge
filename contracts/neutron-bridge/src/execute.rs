@@ -35,7 +35,7 @@ use crate::{error::ContractError, state::CONFIG};
 /// * **ExecuteMsg::Send { destination_addr }** Send CFT-20 token back to the Hub
 /// * **ExecuteMsg::AddSigner { public_key_base64, name }** Adds a signer to the allowed list for signature verification
 /// * **ExecuteMsg::RemoveSigner { public_key_base64 }** Remove a signer from the allowed list for signature verification
-/// * **ExecuteMsg::UpdateConfig { signer_threshold, bridge_chain_id, bridge_ibc_channel, ibc_timeout_seconds }** Update the contract config
+/// * **ExecuteMsg::UpdateConfig { bridge_ibc_channel, ibc_timeout_seconds }** Update the contract config
 /// * **ExecuteMsg::ProposeNewOwner { owner, expires_in }** Propose a new owner for the contract
 /// * **ExecuteMsg::DropOwnershipProposal {}** Remove the ownership transfer proposal
 /// * **ExecuteMsg::ClaimOwnership {}** Claim contract ownership
@@ -80,16 +80,9 @@ pub fn execute(
             remove_signer(deps, env, info, public_key_base64)
         }
         ExecuteMsg::UpdateConfig {
-            bridge_chain_id,
             bridge_ibc_channel,
             ibc_timeout_seconds,
-        } => update_config(
-            deps,
-            info,
-            bridge_chain_id,
-            bridge_ibc_channel,
-            ibc_timeout_seconds,
-        ),
+        } => update_config(deps, info, bridge_ibc_channel, ibc_timeout_seconds),
         ExecuteMsg::ProposeNewOwner { owner, expires_in } => {
             let config = CONFIG.load(deps.storage)?;
             propose_new_owner(
@@ -600,7 +593,6 @@ fn remove_signer(
 fn update_config(
     deps: DepsMut<NeutronQuery>,
     info: MessageInfo,
-    bridge_chain_id: Option<String>,
     bridge_ibc_channel: Option<String>,
     ibc_timeout_seconds: Option<u64>,
 ) -> Result<Response<NeutronMsg>, ContractError> {
@@ -611,17 +603,6 @@ fn update_config(
         return Err(ContractError::Unauthorized {});
     }
 
-    // Allow changing the source chain ID in case the source chain
-    // undergoes an upgrade that changes the chain ID
-    if let Some(bridge_chain_id) = bridge_chain_id {
-        if bridge_chain_id.is_empty() {
-            return Err(ContractError::InvalidConfiguration {
-                reason: "The source chain ID must be specified".to_string(),
-            });
-        }
-        config.bridge_chain_id = bridge_chain_id;
-    }
-
     // Allow changing the IBC channel in case the original channel expires
     // and can't be revived
     if let Some(bridge_ibc_channel) = bridge_ibc_channel {
@@ -630,6 +611,7 @@ fn update_config(
                 reason: "The bridge IBC channel must be specified".to_string(),
             });
         }
+
         config.bridge_ibc_channel = bridge_ibc_channel;
     }
 
