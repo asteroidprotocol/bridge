@@ -22,7 +22,6 @@ use crate::state::{
 use crate::types::{
     BridgingAsset, Config, TokenMetadata, FEE_DENOM, IBC_REPLY_HANDLER_ID,
     INSTANTIATE_DENOM_REPLY_ID, MAX_IBC_TIMEOUT_SECONDS, MIN_IBC_TIMEOUT_SECONDS,
-    MIN_SIGNER_THRESHOLD,
 };
 use crate::{error::ContractError, state::CONFIG};
 
@@ -81,14 +80,12 @@ pub fn execute(
             remove_signer(deps, env, info, public_key_base64)
         }
         ExecuteMsg::UpdateConfig {
-            signer_threshold,
             bridge_chain_id,
             bridge_ibc_channel,
             ibc_timeout_seconds,
         } => update_config(
             deps,
             info,
-            signer_threshold,
             bridge_chain_id,
             bridge_ibc_channel,
             ibc_timeout_seconds,
@@ -603,7 +600,6 @@ fn remove_signer(
 fn update_config(
     deps: DepsMut<NeutronQuery>,
     info: MessageInfo,
-    signer_threshold: Option<u8>,
     bridge_chain_id: Option<String>,
     bridge_ibc_channel: Option<String>,
     ibc_timeout_seconds: Option<u64>,
@@ -613,21 +609,6 @@ fn update_config(
     // Only owner can update the config
     if info.sender != config.owner {
         return Err(ContractError::Unauthorized {});
-    }
-
-    // Signer threshold can't be less than 2. We require at _least_ 2 valid
-    // signatures before allowing the bridge to even be instantiated
-    if let Some(signer_threshold) = signer_threshold {
-        if signer_threshold < MIN_SIGNER_THRESHOLD {
-            return Err(ContractError::InvalidConfiguration {
-                reason: format!(
-                    "Invalid signer threshold, the minimum is {}",
-                    MIN_SIGNER_THRESHOLD
-                ),
-            });
-        }
-
-        config.signer_threshold = signer_threshold;
     }
 
     // Allow changing the source chain ID in case the source chain
@@ -747,7 +728,6 @@ mod testing {
                 bridge_chain_id: "localgaia-1".to_string(),
                 bridge_ibc_channel: "channel-1".to_string(),
                 ibc_timeout_seconds: 300,
-                signer_threshold: 2,
             },
         )
         .unwrap();

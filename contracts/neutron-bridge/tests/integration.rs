@@ -5,7 +5,7 @@ use asteroid_neutron_bridge::msg::{ExecuteMsg, InstantiateMsg, QueryMsg};
 use asteroid_neutron_bridge::query::query;
 use asteroid_neutron_bridge::types::{
     Config, QuerySignersResponse, QueryTokensResponse, TokenMetadata, MAX_IBC_TIMEOUT_SECONDS,
-    MIN_IBC_TIMEOUT_SECONDS, MIN_SIGNER_THRESHOLD,
+    MIN_IBC_TIMEOUT_SECONDS,
 };
 use astroport_test::cw_multi_test::{AppBuilder, Contract, ContractWrapper, Executor};
 // use astroport_test::modules::stargate::{MockStargate, StargateApp};
@@ -66,7 +66,6 @@ fn test_instantiate() {
             owner.clone(),
             &InstantiateMsg {
                 owner: owner.to_string(),
-                signer_threshold: 2,
                 ibc_timeout_seconds: 10,
                 bridge_ibc_channel: "channel-1".to_string(),
                 bridge_chain_id: "localgaia-1".to_string(),
@@ -83,46 +82,16 @@ fn test_instantiate() {
         .query_wasm_smart(bridge_address, &QueryMsg::Config {})
         .unwrap();
 
-    assert_eq!(response.signer_threshold, 2);
     assert_eq!(response.bridge_chain_id, "localgaia-1");
     assert_eq!(response.bridge_ibc_channel, "channel-1");
     assert_eq!(response.ibc_timeout_seconds, 10);
 
-    // Test invalid configurations
     let err = app
         .instantiate_contract(
             contract_code,
             owner.clone(),
             &InstantiateMsg {
                 owner: owner.to_string(),
-                signer_threshold: 0,
-                ibc_timeout_seconds: 10,
-                bridge_ibc_channel: "channel-1".to_string(),
-                bridge_chain_id: "localgaia-1".to_string(),
-            },
-            &[],
-            "Asteroid Bridge",
-            None,
-        )
-        .unwrap_err();
-
-    assert_eq!(
-        err.downcast::<ContractError>().unwrap(),
-        ContractError::InvalidConfiguration {
-            reason: format!(
-                "Invalid signer threshold, the minimum is {}",
-                MIN_SIGNER_THRESHOLD
-            )
-        }
-    );
-
-    let err = app
-        .instantiate_contract(
-            contract_code,
-            owner.clone(),
-            &InstantiateMsg {
-                owner: owner.to_string(),
-                signer_threshold: 2,
                 ibc_timeout_seconds: MIN_IBC_TIMEOUT_SECONDS - 1,
                 bridge_ibc_channel: "channel-1".to_string(),
                 bridge_chain_id: "localgaia-1".to_string(),
@@ -148,7 +117,6 @@ fn test_instantiate() {
             owner.clone(),
             &InstantiateMsg {
                 owner: owner.to_string(),
-                signer_threshold: 2,
                 ibc_timeout_seconds: MAX_IBC_TIMEOUT_SECONDS + 1,
                 bridge_ibc_channel: "channel-1".to_string(),
                 bridge_chain_id: "localgaia-1".to_string(),
@@ -174,7 +142,6 @@ fn test_instantiate() {
             owner.clone(),
             &InstantiateMsg {
                 owner: owner.to_string(),
-                signer_threshold: 2,
                 ibc_timeout_seconds: 10,
                 bridge_ibc_channel: "".to_string(),
                 bridge_chain_id: "localgaia-1".to_string(),
@@ -198,7 +165,6 @@ fn test_instantiate() {
             owner.clone(),
             &InstantiateMsg {
                 owner: owner.to_string(),
-                signer_threshold: 2,
                 ibc_timeout_seconds: 10,
                 bridge_ibc_channel: "channel-0".to_string(),
                 bridge_chain_id: "".to_string(),
@@ -230,7 +196,6 @@ fn test_add_signer() {
             owner.clone(),
             &InstantiateMsg {
                 owner: owner.to_string(),
-                signer_threshold: 2,
                 ibc_timeout_seconds: 10,
                 bridge_ibc_channel: "channel-0".to_string(),
                 bridge_chain_id: "localgaia-1".to_string(),
@@ -333,7 +298,6 @@ fn test_remove_signer() {
             owner.clone(),
             &InstantiateMsg {
                 owner: owner.to_string(),
-                signer_threshold: 2,
                 ibc_timeout_seconds: 10,
                 bridge_ibc_channel: "channel-0".to_string(),
                 bridge_chain_id: "localgaia-1".to_string(),
@@ -444,7 +408,6 @@ fn test_update_config() {
             owner.clone(),
             &InstantiateMsg {
                 owner: owner.to_string(),
-                signer_threshold: 2,
                 ibc_timeout_seconds: 10,
                 bridge_ibc_channel: "channel-0".to_string(),
                 bridge_chain_id: "localgaia-1".to_string(),
@@ -461,7 +424,6 @@ fn test_update_config() {
             not_owner.clone(),
             bridge_address.clone(),
             &ExecuteMsg::UpdateConfig {
-                signer_threshold: Some(1),
                 bridge_chain_id: None,
                 bridge_ibc_channel: None,
                 ibc_timeout_seconds: None,
@@ -475,36 +437,10 @@ fn test_update_config() {
         ContractError::Unauthorized {}
     );
 
-    // Attempt to update config with invalid signer threshold
-    let err = app
-        .execute_contract(
-            owner.clone(),
-            bridge_address.clone(),
-            &ExecuteMsg::UpdateConfig {
-                signer_threshold: Some(MIN_SIGNER_THRESHOLD - 1),
-                bridge_chain_id: None,
-                bridge_ibc_channel: None,
-                ibc_timeout_seconds: None,
-            },
-            &[],
-        )
-        .unwrap_err();
-
-    assert_eq!(
-        err.downcast::<ContractError>().unwrap(),
-        ContractError::InvalidConfiguration {
-            reason: format!(
-                "Invalid signer threshold, the minimum is {}",
-                MIN_SIGNER_THRESHOLD
-            )
-        }
-    );
-
     app.execute_contract(
         owner.clone(),
         bridge_address.clone(),
         &ExecuteMsg::UpdateConfig {
-            signer_threshold: Some(MIN_SIGNER_THRESHOLD + 1),
             bridge_chain_id: None,
             bridge_ibc_channel: None,
             ibc_timeout_seconds: None,
@@ -519,7 +455,6 @@ fn test_update_config() {
             owner.clone(),
             bridge_address.clone(),
             &ExecuteMsg::UpdateConfig {
-                signer_threshold: None,
                 bridge_chain_id: Some("".to_string()),
                 bridge_ibc_channel: None,
                 ibc_timeout_seconds: None,
@@ -539,7 +474,6 @@ fn test_update_config() {
         owner.clone(),
         bridge_address.clone(),
         &ExecuteMsg::UpdateConfig {
-            signer_threshold: None,
             bridge_chain_id: Some("newgaia-1".to_string()),
             bridge_ibc_channel: None,
             ibc_timeout_seconds: None,
@@ -554,7 +488,6 @@ fn test_update_config() {
             owner.clone(),
             bridge_address.clone(),
             &ExecuteMsg::UpdateConfig {
-                signer_threshold: None,
                 bridge_chain_id: None,
                 bridge_ibc_channel: Some("".to_string()),
                 ibc_timeout_seconds: None,
@@ -574,7 +507,6 @@ fn test_update_config() {
         owner.clone(),
         bridge_address.clone(),
         &ExecuteMsg::UpdateConfig {
-            signer_threshold: None,
             bridge_chain_id: None,
             bridge_ibc_channel: Some("channel-9".to_string()),
             ibc_timeout_seconds: None,
@@ -589,7 +521,6 @@ fn test_update_config() {
             owner.clone(),
             bridge_address.clone(),
             &ExecuteMsg::UpdateConfig {
-                signer_threshold: None,
                 bridge_chain_id: None,
                 bridge_ibc_channel: None,
                 ibc_timeout_seconds: Some(MIN_IBC_TIMEOUT_SECONDS - 1),
@@ -612,7 +543,6 @@ fn test_update_config() {
             owner.clone(),
             bridge_address.clone(),
             &ExecuteMsg::UpdateConfig {
-                signer_threshold: None,
                 bridge_chain_id: None,
                 bridge_ibc_channel: None,
                 ibc_timeout_seconds: Some(MAX_IBC_TIMEOUT_SECONDS + 1),
@@ -634,7 +564,6 @@ fn test_update_config() {
         owner.clone(),
         bridge_address.clone(),
         &ExecuteMsg::UpdateConfig {
-            signer_threshold: None,
             bridge_chain_id: None,
             bridge_ibc_channel: None,
             ibc_timeout_seconds: Some(MIN_IBC_TIMEOUT_SECONDS + 1),
@@ -649,7 +578,6 @@ fn test_update_config() {
         .query_wasm_smart(&bridge_address, &QueryMsg::Config {})
         .unwrap();
 
-    assert_eq!(response.signer_threshold, MIN_SIGNER_THRESHOLD + 1);
     assert_eq!(response.bridge_chain_id, "newgaia-1");
     assert_eq!(response.bridge_ibc_channel, "channel-9");
     assert_eq!(response.ibc_timeout_seconds, MIN_IBC_TIMEOUT_SECONDS + 1);
@@ -667,7 +595,6 @@ fn test_link_token() {
             owner.clone(),
             &InstantiateMsg {
                 owner: owner.to_string(),
-                signer_threshold: 2,
                 ibc_timeout_seconds: 10,
                 bridge_ibc_channel: "channel-0".to_string(),
                 bridge_chain_id: "localgaia-1".to_string(),
@@ -882,7 +809,6 @@ fn test_enable_disable_token() {
             owner.clone(),
             &InstantiateMsg {
                 owner: owner.to_string(),
-                signer_threshold: 2,
                 ibc_timeout_seconds: 10,
                 bridge_ibc_channel: "channel-0".to_string(),
                 bridge_chain_id: "localgaia-1".to_string(),
@@ -1097,7 +1023,6 @@ fn test_bridge_receive() {
             owner.clone(),
             &InstantiateMsg {
                 owner: owner.to_string(),
-                signer_threshold: 2,
                 ibc_timeout_seconds: 10,
                 bridge_ibc_channel: "channel-0".to_string(),
                 bridge_chain_id: "localgaia-1".to_string(),
@@ -1274,6 +1199,54 @@ fn test_bridge_receive() {
     let res = app.wrap().query_all_balances("user1").unwrap();
     assert_eq!(res.len(), 0);
 
+    // Remove a signer to trigger a threshold too low
+    app.execute_contract(
+        owner.clone(),
+        bridge_address.clone(),
+        &ExecuteMsg::RemoveSigner {
+            public_key_base64: VALID_SIGNER_2.to_string(),
+        },
+        &[],
+    )
+    .unwrap();
+
+    // Bridge transaction with insufficient signatures
+    let err = app
+        .execute_contract(
+            not_owner.clone(),
+            bridge_address.clone(),
+            &ExecuteMsg::Receive {
+                source_chain_id: "localgaia-1".to_string(),
+                transaction_hash: "TXHASH1".to_string(),
+                ticker: "TESTTOKEN".to_string(),
+                amount: Uint128::from(1000u64),
+                destination_addr: "user1".to_string(),
+                signatures: vec![
+                    BRIDGE_SIGNATURE_1.to_string().clone(),
+                    BRIDGE_SIGNATURE_2.to_string().clone(),
+                ],
+            },
+            &[],
+        )
+        .unwrap_err();
+
+    assert_eq!(
+        err.downcast::<ContractError>().unwrap(),
+        ContractError::ThresholdNotMet {}
+    );
+
+    // Add the signer back
+    app.execute_contract(
+        owner.clone(),
+        bridge_address.clone(),
+        &ExecuteMsg::AddSigner {
+            name: "signer2".to_string(),
+            public_key_base64: VALID_SIGNER_2.to_string(),
+        },
+        &[],
+    )
+    .unwrap();
+
     // Valid bridge transaction
     app.execute_contract(
         not_owner.clone(),
@@ -1420,7 +1393,6 @@ fn test_bridge_send() {
             owner.clone(),
             &InstantiateMsg {
                 owner: owner.to_string(),
-                signer_threshold: 2,
                 ibc_timeout_seconds: 10,
                 bridge_ibc_channel: "channel-0".to_string(),
                 bridge_chain_id: "localgaia-1".to_string(),

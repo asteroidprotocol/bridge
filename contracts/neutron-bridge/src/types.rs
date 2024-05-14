@@ -18,8 +18,6 @@ pub const IBC_REPLY_HANDLER_ID: u64 = 2;
 pub struct Config {
     /// The owner's address
     pub owner: Addr,
-    /// The threshold of signers needed to confirm a message
-    pub signer_threshold: u8,
     /// The chain ID this bridge is connected to
     pub bridge_chain_id: String,
     /// The channel used to communicate with the Hub

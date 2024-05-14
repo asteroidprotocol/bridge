@@ -7,9 +7,7 @@ use neutron_sdk::bindings::query::NeutronQuery;
 use crate::error::ContractError;
 use crate::msg::InstantiateMsg;
 use crate::state::CONFIG;
-use crate::types::{
-    Config, MAX_IBC_TIMEOUT_SECONDS, MIN_IBC_TIMEOUT_SECONDS, MIN_SIGNER_THRESHOLD,
-};
+use crate::types::{Config, MAX_IBC_TIMEOUT_SECONDS, MIN_IBC_TIMEOUT_SECONDS};
 
 /// Contract name that is used for migration
 const CONTRACT_NAME: &str = "asteroid-bridge";
@@ -26,17 +24,6 @@ pub fn instantiate(
     msg: InstantiateMsg,
 ) -> Result<Response<NeutronMsg>, ContractError> {
     set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
-
-    // Signer threshold can't be less than 2. We require at _least_ 2 valid
-    // signatures before allowing the bridge to even be instantiated
-    if msg.signer_threshold < MIN_SIGNER_THRESHOLD {
-        return Err(ContractError::InvalidConfiguration {
-            reason: format!(
-                "Invalid signer threshold, the minimum is {}",
-                MIN_SIGNER_THRESHOLD
-            ),
-        });
-    }
 
     // The bridge IBC channel must be specified, that is, the channel used
     // to send information back to the source chain
@@ -65,7 +52,6 @@ pub fn instantiate(
 
     let config = Config {
         owner: deps.api.addr_validate(&msg.owner)?,
-        signer_threshold: msg.signer_threshold,
         bridge_chain_id: msg.bridge_chain_id.clone(),
         bridge_ibc_channel: msg.bridge_ibc_channel.clone(),
         ibc_timeout_seconds: msg.ibc_timeout_seconds,

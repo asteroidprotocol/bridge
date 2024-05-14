@@ -172,7 +172,6 @@ mod testing {
                 bridge_chain_id: "localgaia-1".to_string(),
                 bridge_ibc_channel: "channel-1".to_string(),
                 ibc_timeout_seconds: 300,
-                signer_threshold: 2,
             },
         )
         .unwrap();
@@ -281,7 +280,6 @@ mod testing {
                 bridge_chain_id: "localgaia-1".to_string(),
                 bridge_ibc_channel: "channel-1".to_string(),
                 ibc_timeout_seconds: 300,
-                signer_threshold: 2,
             },
         )
         .unwrap();
@@ -412,7 +410,6 @@ mod testing {
                 bridge_chain_id: "localgaia-1".to_string(),
                 bridge_ibc_channel: "channel-1".to_string(),
                 ibc_timeout_seconds: 300,
-                signer_threshold: 2,
             },
         )
         .unwrap();

@@ -8,8 +8,6 @@ use crate::types::{Config, QuerySignersResponse, QueryTokensResponse, TokenMetad
 pub struct InstantiateMsg {
     /// The contract owner
     pub owner: String,
-    /// The threshold of signers needed to confirm a message
-    pub signer_threshold: u8,
     /// The chain ID this bridge is connected to
     pub bridge_chain_id: String,
     /// The IBC channel to the Cosmos Hub
@@ -81,8 +79,6 @@ pub enum ExecuteMsg {
     },
     /// Update the contract config
     UpdateConfig {
-        /// The new threshold of signers needed to confirm a message
-        signer_threshold: Option<u8>,
         /// The chain ID this bridge is connected to
         bridge_chain_id: Option<String>,
         /// The new IBC channel to the Cosmos Hub to use
