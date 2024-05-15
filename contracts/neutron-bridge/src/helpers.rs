@@ -1,5 +1,7 @@
 use base64::{engine::general_purpose, Engine as _};
-use cosmwasm_std::{BankMsg, Coin, CosmosMsg, Deps, Order};
+use cosmwasm_std::{
+    BankMsg, ChannelResponse, Coin, CosmosMsg, Deps, IbcQuery, Order, QuerierWrapper,
+};
 use neutron_sdk::bindings::{msg::NeutronMsg, query::NeutronQuery};
 use osmosis_std::types::osmosis::tokenfactory::v1beta1::MsgMint;
 
@@ -114,6 +116,25 @@ pub fn get_majority_threshold(signers_count: usize) -> u8 {
         .try_into()
         .unwrap_or(MIN_SIGNER_THRESHOLD)
         .max(MIN_SIGNER_THRESHOLD)
+}
+
+/// Checks that the given channel and port is valid
+pub fn validate_channel(
+    querier: QuerierWrapper<NeutronQuery>,
+    given_channel: &String,
+) -> Result<(), ContractError> {
+    let ChannelResponse { channel } = querier.query(
+        &IbcQuery::Channel {
+            channel_id: given_channel.to_string(),
+            port_id: Some("transfer".to_string()),
+        }
+        .into(),
+    )?;
+    channel
+        .map(|_| ())
+        .ok_or_else(|| ContractError::InvalidConfiguration {
+            reason: "The provided IBC channel is invalid".to_string(),
+        })
 }
 
 #[cfg(test)]

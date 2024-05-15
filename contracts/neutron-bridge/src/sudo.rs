@@ -148,6 +148,27 @@ mod testing {
             SystemResult::Ok(contract_result)
         };
 
+        // QueryRequest::Ibc(IbcQuery::ListChannels { .. }) => {
+        //         let response = ListChannelsResponse {
+        //             channels: vec![
+        //                 IbcChannel::new(
+        //                     IbcEndpoint {
+        //                         port_id: "wasm".to_string(),
+        //                         channel_id: "channel-3".to_string(),
+        //                     },
+        //                     IbcEndpoint {
+        //                         port_id: "wasm".to_string(),
+        //                         channel_id: "channel-1".to_string(),
+        //                     },
+        //                     IbcOrder::Unordered,
+        //                     "version",
+        //                     "connection-1",
+        //                 ),
+        //             ],
+        //         };
+        //         SystemResult::Ok(to_json_binary(&response).into())
+        //     }
+
         OwnedDeps {
             storage: MockStorage::default(),
             api: MockApi::default(),
@@ -278,7 +299,7 @@ mod testing {
             InstantiateMsg {
                 owner: OWNER.to_string(),
                 bridge_chain_id: "localgaia-1".to_string(),
-                bridge_ibc_channel: "channel-1".to_string(),
+                bridge_ibc_channel: "channel-0".to_string(),
                 ibc_timeout_seconds: 300,
             },
         )

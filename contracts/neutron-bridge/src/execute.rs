@@ -13,7 +13,7 @@ use osmosis_std::types::osmosis::tokenfactory::v1beta1::{
     MsgBurn, MsgCreateDenom, MsgCreateDenomResponse, MsgSetDenomMetadata,
 };
 
-use crate::helpers::{build_mint_messages, verify_signatures};
+use crate::helpers::{build_mint_messages, validate_channel, verify_signatures};
 use crate::msg::ExecuteMsg;
 use crate::state::{
     BRIDGE_CURRENT_PAYLOAD, BRIDGE_INFLIGHT, DISABLED_TOKENS, HANDLED_TRANSACTIONS,
@@ -613,6 +613,9 @@ fn update_config(
                 reason: "The bridge IBC channel must be specified".to_string(),
             });
         }
+
+        // Ensure the IBC channel exists with transfer port
+        validate_channel(deps.querier, &bridge_ibc_channel)?;
 
         config.bridge_ibc_channel = bridge_ibc_channel;
     }

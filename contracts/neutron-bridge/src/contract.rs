@@ -5,6 +5,7 @@ use neutron_sdk::bindings::msg::NeutronMsg;
 use neutron_sdk::bindings::query::NeutronQuery;
 
 use crate::error::ContractError;
+use crate::helpers::validate_channel;
 use crate::msg::{InstantiateMsg, MigrateMsg};
 use crate::state::CONFIG;
 use crate::types::{Config, MAX_IBC_TIMEOUT_SECONDS, MIN_IBC_TIMEOUT_SECONDS};
@@ -32,6 +33,12 @@ pub fn instantiate(
             reason: "The bridge IBC channel must be specified".to_string(),
         });
     }
+
+    // Ensure the IBC channel exists with transfer port
+    // Unlike regular IBC token transfers where the channel is important, in
+    // this bridge the channel is used to send information back to the source
+    // chain but has no bearing on the denom of a token
+    validate_channel(deps.querier, &msg.bridge_ibc_channel)?;
 
     // The source chain ID must be specified, that is, the chain ID of the
     // source chain, not the chain ID where this contract is deployed

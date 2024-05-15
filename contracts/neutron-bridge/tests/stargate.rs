@@ -2,13 +2,13 @@ use cosmwasm_schema::serde::de::DeserializeOwned;
 use cosmwasm_std::{
     coins,
     testing::{MockApi, MockStorage},
-    Addr, Api, BankMsg, Binary, BlockInfo, CustomMsg, CustomQuery, Empty, Querier, Storage,
-    SubMsgResponse,
+    to_json_binary, Addr, Api, BankMsg, Binary, BlockInfo, ChannelResponse, CustomMsg, CustomQuery,
+    Empty, IbcChannel, IbcEndpoint, IbcMsg, IbcOrder, IbcQuery, Querier, Storage, SubMsgResponse,
 };
 use cw_multi_test::{
     App, AppResponse, BankKeeper, BankSudo, CosmosRouter, DistributionKeeper, FailingModule,
-    GovFailingModule, IbcFailingModule, Module, StakeKeeper, Stargate, StargateMsg, StargateQuery,
-    SudoMsg, WasmKeeper,
+    GovFailingModule, Ibc, Module, StakeKeeper, Stargate, StargateMsg, StargateQuery, SudoMsg,
+    WasmKeeper,
 };
 
 use anyhow::{Ok, Result as AnyResult};
@@ -25,10 +25,101 @@ pub type StargateApp<ExecC = Empty, QueryC = Empty> = App<
     WasmKeeper<ExecC, QueryC>,
     StakeKeeper,
     DistributionKeeper,
-    IbcFailingModule,
+    MockIbc,
     GovFailingModule,
     MockStargate,
 >;
+
+#[derive(Default)]
+pub struct MockIbc {}
+
+impl Module for MockIbc {
+    type ExecT = IbcMsg;
+    type QueryT = IbcQuery;
+    type SudoT = Empty;
+
+    fn execute<ExecC, QueryC>(
+        &self,
+        _api: &dyn cosmwasm_std::Api,
+        _storage: &mut dyn cosmwasm_std::Storage,
+        _router: &dyn CosmosRouter<ExecC = ExecC, QueryC = QueryC>,
+        _block: &cosmwasm_std::BlockInfo,
+        _sender: cosmwasm_std::Addr,
+        _msg: Self::ExecT,
+    ) -> AnyResult<AppResponse>
+    where
+        ExecC: std::fmt::Debug
+            + Clone
+            + PartialEq
+            + schemars::JsonSchema
+            + serde::de::DeserializeOwned
+            + 'static,
+        QueryC: cosmwasm_std::CustomQuery + serde::de::DeserializeOwned + 'static,
+    {
+        Ok(AppResponse::default())
+    }
+
+    fn sudo<ExecC, QueryC>(
+        &self,
+        _api: &dyn cosmwasm_std::Api,
+        _storage: &mut dyn cosmwasm_std::Storage,
+        _router: &dyn CosmosRouter<ExecC = ExecC, QueryC = QueryC>,
+        _block: &cosmwasm_std::BlockInfo,
+        _msg: Self::SudoT,
+    ) -> AnyResult<AppResponse>
+    where
+        ExecC: std::fmt::Debug
+            + Clone
+            + PartialEq
+            + schemars::JsonSchema
+            + serde::de::DeserializeOwned
+            + 'static,
+        QueryC: cosmwasm_std::CustomQuery + serde::de::DeserializeOwned + 'static,
+    {
+        Ok(AppResponse::default())
+    }
+
+    fn query(
+        &self,
+        _api: &dyn cosmwasm_std::Api,
+        _storage: &dyn cosmwasm_std::Storage,
+        _querier: &dyn cosmwasm_std::Querier,
+        _block: &cosmwasm_std::BlockInfo,
+        request: Self::QueryT,
+    ) -> AnyResult<Binary> {
+        match request {
+            IbcQuery::Channel {
+                channel_id,
+                port_id,
+            } => {
+                if (channel_id == "channel-0" || channel_id == "channel-9")
+                    && port_id == Some("transfer".to_string())
+                {
+                    return Ok(to_json_binary(&ChannelResponse {
+                        channel: Some(IbcChannel::new(
+                            IbcEndpoint {
+                                port_id: "transfer".to_string(),
+                                channel_id: channel_id.clone(),
+                            },
+                            IbcEndpoint {
+                                port_id: "transfer".to_string(),
+                                channel_id,
+                            },
+                            IbcOrder::Unordered,
+                            "ics20-version",
+                            "connection-0",
+                        )),
+                    })?);
+                }
+            }
+            _ => unimplemented!(),
+        }
+
+        Ok(Binary::default())
+    }
+}
+
+impl Ibc for MockIbc {}
 
 #[derive(Default)]
 pub struct MockStargate {}

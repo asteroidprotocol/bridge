@@ -12,6 +12,7 @@ use astroport_test::cw_multi_test::{AppBuilder, Contract, ContractWrapper, Execu
 use cosmwasm_std::{Addr, Coin, Uint128};
 use neutron_sdk::bindings::msg::NeutronMsg;
 use neutron_sdk::bindings::query::NeutronQuery;
+use stargate::MockIbc;
 
 use crate::stargate::{MockStargate, StargateApp};
 
@@ -37,6 +38,7 @@ mod stargate;
 fn mock_app(owner: &Addr, coins: Vec<Coin>) -> NeutronApp {
     AppBuilder::new_custom()
         .with_stargate(MockStargate::default())
+        .with_ibc(MockIbc::default())
         .build(|router, _, storage| {
             // initialization moved to App construction
             router.bank.init_balance(storage, owner, coins).unwrap()
@@ -67,7 +69,7 @@ fn test_instantiate() {
             &InstantiateMsg {
                 owner: owner.to_string(),
                 ibc_timeout_seconds: 10,
-                bridge_ibc_channel: "channel-1".to_string(),
+                bridge_ibc_channel: "channel-0".to_string(),
                 bridge_chain_id: "localgaia-1".to_string(),
             },
             &[],
@@ -83,7 +85,7 @@ fn test_instantiate() {
         .unwrap();
 
     assert_eq!(response.bridge_chain_id, "localgaia-1");
-    assert_eq!(response.bridge_ibc_channel, "channel-1");
+    assert_eq!(response.bridge_ibc_channel, "channel-0");
     assert_eq!(response.ibc_timeout_seconds, 10);
 
     let err = app
@@ -93,7 +95,7 @@ fn test_instantiate() {
             &InstantiateMsg {
                 owner: owner.to_string(),
                 ibc_timeout_seconds: MIN_IBC_TIMEOUT_SECONDS - 1,
-                bridge_ibc_channel: "channel-1".to_string(),
+                bridge_ibc_channel: "channel-0".to_string(),
                 bridge_chain_id: "localgaia-1".to_string(),
             },
             &[],
@@ -118,7 +120,7 @@ fn test_instantiate() {
             &InstantiateMsg {
                 owner: owner.to_string(),
                 ibc_timeout_seconds: MAX_IBC_TIMEOUT_SECONDS + 1,
-                bridge_ibc_channel: "channel-1".to_string(),
+                bridge_ibc_channel: "channel-0".to_string(),
                 bridge_chain_id: "localgaia-1".to_string(),
             },
             &[],
@@ -158,6 +160,30 @@ fn test_instantiate() {
             reason: "The bridge IBC channel must be specified".to_string()
         }
     );
+
+    // TODO: Add additional invalid IBC channel tests
+    // let err = app
+    //     .instantiate_contract(
+    //         contract_code,
+    //         owner.clone(),
+    //         &InstantiateMsg {
+    //             owner: owner.to_string(),
+    //             ibc_timeout_seconds: 10,
+    //             bridge_ibc_channel: "channel-1".to_string(),
+    //             bridge_chain_id: "".to_string(),
+    //         },
+    //         &[],
+    //         "Asteroid Bridge",
+    //         None,
+    //     )
+    //     .unwrap_err();
+
+    // assert_eq!(
+    //     err.downcast::<ContractError>().unwrap(),
+    //     ContractError::InvalidConfiguration {
+    //         reason: "The provided IBC channel is invalid".to_string()
+    //     }
+    // );
 
     let err = app
         .instantiate_contract(
