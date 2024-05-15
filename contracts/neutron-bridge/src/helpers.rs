@@ -64,7 +64,7 @@ pub fn verify_signatures(
             let is_valid = deps.api.ed25519_verify(message, signature, &allowed_key)?;
             if is_valid {
                 verified_signatures += 1;
-                if verified_signatures >= majority_threshold {
+                if verified_signatures == majority_threshold {
                     return Ok(());
                 }
                 // We can move on to the next key and signatures

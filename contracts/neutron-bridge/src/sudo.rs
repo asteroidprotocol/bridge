@@ -1,4 +1,4 @@
-use cosmwasm_std::{entry_point, DepsMut, Env, Response};
+use cosmwasm_std::{entry_point, BankMsg, Coin, CosmosMsg, DepsMut, Env, Response, Uint128};
 use neutron_sdk::{
     bindings::{msg::NeutronMsg, query::NeutronQuery},
     sudo::msg::TransferSudoMsg,
@@ -32,10 +32,39 @@ pub fn sudo(
                     detail: "missing sequence id in success".to_string(),
                 })?;
 
+            // Get the assets being bridged for this channel and sequence
+            // We need to return the fees to the sender
+            let payload = BRIDGE_INFLIGHT.load(deps.storage, (&channel_id, sequence_id))?;
+
+            // The timeout fees are refunded to the contract in case of ack,
+            // let's return that to the original sender
+            let mut refund_messages: Vec<CosmosMsg<NeutronMsg>> = payload
+                .fees
+                .timeout_fee
+                .iter()
+                .map(|coin| {
+                    CosmosMsg::Bank(BankMsg::Send {
+                        to_address: payload.sender.to_string(),
+                        amount: vec![coin.clone()],
+                    })
+                })
+                .collect::<Vec<CosmosMsg<NeutronMsg>>>();
+
+            // We also need to refund the 1untrn we use to do the actual IBC
+            // transfer
+            refund_messages.push(CosmosMsg::Bank(BankMsg::Send {
+                to_address: payload.sender.to_string(),
+                amount: vec![Coin {
+                    denom: "untrn".to_string(),
+                    amount: Uint128::one(),
+                }],
+            }));
+
             // The IBC transfer succeeded, we can remove the bridging asset from the in-flight
             BRIDGE_INFLIGHT.remove(deps.storage, (&channel_id, sequence_id));
 
             Ok(Response::new()
+                .add_messages(refund_messages)
                 .add_attribute("action", "ibc_bridge_response")
                 .add_attribute("state", format!("success on sequence {:?}", sequence_id)))
         }
@@ -62,6 +91,30 @@ pub fn sudo(
                 payload.funds.clone(),
                 payload.sender.to_string(),
             );
+
+            // The timeout fee is refunded to the contract in case of error,
+            // let's return that to the original sender
+            let mut refund_messages: Vec<CosmosMsg<NeutronMsg>> = payload
+                .fees
+                .timeout_fee
+                .iter()
+                .map(|coin| {
+                    CosmosMsg::Bank(BankMsg::Send {
+                        to_address: payload.sender.to_string(),
+                        amount: vec![coin.clone()],
+                    })
+                })
+                .collect::<Vec<CosmosMsg<NeutronMsg>>>();
+
+            // We also need to refund the 1untrn we use to do the actual IBC
+            // transfer
+            refund_messages.push(CosmosMsg::Bank(BankMsg::Send {
+                to_address: payload.sender.to_string(),
+                amount: vec![Coin {
+                    denom: "untrn".to_string(),
+                    amount: Uint128::one(),
+                }],
+            }));
 
             // Remove the in-flight asset as it has been handled
             BRIDGE_INFLIGHT.remove(deps.storage, (&channel_id, sequence_id));
@@ -95,11 +148,36 @@ pub fn sudo(
                 payload.sender.to_string(),
             );
 
+            // The ack fees are refunded to the contract in case of timeout,
+            // let's return that to the original sender
+            let mut refund_messages: Vec<CosmosMsg<NeutronMsg>> = payload
+                .fees
+                .ack_fee
+                .iter()
+                .map(|coin| {
+                    CosmosMsg::Bank(BankMsg::Send {
+                        to_address: payload.sender.to_string(),
+                        amount: vec![coin.clone()],
+                    })
+                })
+                .collect::<Vec<CosmosMsg<NeutronMsg>>>();
+
+            // We also need to refund the 1untrn we use to do the actual IBC
+            // transfer
+            refund_messages.push(CosmosMsg::Bank(BankMsg::Send {
+                to_address: payload.sender.to_string(),
+                amount: vec![Coin {
+                    denom: "untrn".to_string(),
+                    amount: Uint128::one(),
+                }],
+            }));
+
             // Remove the in-flight asset as it has been handled
             BRIDGE_INFLIGHT.remove(deps.storage, (&channel_id, sequence_id));
 
             Ok(Response::new()
                 .add_messages(mint_messages)
+                .add_messages(refund_messages)
                 .add_attribute("action", "ibc_bridge_response")
                 .add_attribute("state", format!("timeout on sequence {:?}", sequence_id)))
         }
@@ -204,6 +282,11 @@ mod testing {
                 &BridgingAsset {
                     sender: Addr::unchecked(USER),
                     funds: coin(100, "factory/contract0/TESTTOKEN"),
+                    fees: IbcFee {
+                        recv_fee: vec![],
+                        ack_fee: coins(100_000, FEE_DENOM),
+                        timeout_fee: coins(100_000, FEE_DENOM),
+                    },
                 },
             )
             .unwrap();
@@ -312,6 +395,11 @@ mod testing {
                 &BridgingAsset {
                     sender: Addr::unchecked(USER),
                     funds: coin(100, "factory/contract0/TESTTOKEN"),
+                    fees: IbcFee {
+                        recv_fee: vec![],
+                        ack_fee: coins(100_000, FEE_DENOM),
+                        timeout_fee: coins(100_000, FEE_DENOM),
+                    },
                 },
             )
             .unwrap();
@@ -442,6 +530,11 @@ mod testing {
                 &BridgingAsset {
                     sender: Addr::unchecked(USER),
                     funds: coin(1000, "factory/contract0/TESTTOKEN"),
+                    fees: IbcFee {
+                        recv_fee: vec![],
+                        ack_fee: coins(100_000, FEE_DENOM),
+                        timeout_fee: coins(100_000, FEE_DENOM),
+                    },
                 },
             )
             .unwrap();

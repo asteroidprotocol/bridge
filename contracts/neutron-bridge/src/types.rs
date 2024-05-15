@@ -1,5 +1,6 @@
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Addr, Coin};
+use neutron_sdk::bindings::msg::IbcFee;
 
 // Minimum IBC timeout is 5 seconds
 pub const MIN_IBC_TIMEOUT_SECONDS: u64 = 5;
@@ -53,8 +54,10 @@ pub struct QueryTokensResponse {
 
 #[cw_serde]
 pub struct BridgingAsset {
-    // pub channel_id: String,
-    // pub sequence: u64,
+    /// The sender of the bridge transaction
     pub sender: Addr,
+    /// The funds being bridged
     pub funds: Coin,
+    /// The IBC fees for the transaction
+    pub fees: IbcFee,
 }

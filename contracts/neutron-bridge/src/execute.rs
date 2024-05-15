@@ -485,7 +485,7 @@ fn bridge_send(
             .plus_seconds(config.ibc_timeout_seconds)
             .nanos(),
         memo: memo.clone(),
-        fee,
+        fee: fee.clone(),
     };
 
     // Capture the inflight asset to track the bridging to be able to handle the
@@ -493,6 +493,7 @@ fn bridge_send(
     let inflight = BridgingAsset {
         sender: info.sender,
         funds: bridging_coin.clone(),
+        fees: fee,
     };
     BRIDGE_CURRENT_PAYLOAD.save(deps.storage, &inflight)?;
 
