@@ -264,6 +264,26 @@ fn test_add_signer() {
     )
     .unwrap();
 
+    // Add a another signer with duplicate name but new key
+    let err = app
+        .execute_contract(
+            owner.clone(),
+            bridge_address.clone(),
+            &ExecuteMsg::AddSigner {
+                name: "signer".to_string(),
+                public_key_base64: VALID_SIGNER_2.to_string(),
+            },
+            &[],
+        )
+        .unwrap_err();
+
+    assert_eq!(
+        err.downcast::<ContractError>().unwrap(),
+        ContractError::InvalidConfiguration {
+            reason: "The name 'signer' is already linked to a public key".to_string()
+        }
+    );
+
     // Add a duplicate signer
     let err = app
         .execute_contract(

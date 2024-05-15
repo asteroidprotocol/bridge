@@ -546,6 +546,21 @@ fn add_signer(
         });
     }
 
+    // Check that the name isn't already in use
+    // Note that with an excessive amount of signers, this may run out of gas
+    SIGNERS
+        .range(deps.storage, None, None, cosmwasm_std::Order::Ascending)
+        .try_for_each(|item| {
+            if let Ok((_, signer_name)) = item {
+                if signer_name == name {
+                    return Err(ContractError::InvalidConfiguration {
+                        reason: format!("The name '{}' is already linked to a public key", name),
+                    });
+                }
+            }
+            Ok(())
+        })?;
+
     SIGNERS.save(deps.storage, &public_key, &name)?;
 
     Ok(Response::default()
