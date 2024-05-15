@@ -30,7 +30,7 @@ pub fn verify_signatures(
 
     // Calculate the threshold based on the number of signers
     let keys = SIGNERS.keys(deps.storage, None, None, Order::Ascending);
-    let majority_threshold = get_majority_threshold(keys.count());
+    let majority_threshold = get_supermajority_threshold(keys.count());
 
     // If the number of unique signatures are less than the threshold, fail the verification
     if unique_signatures.len() < majority_threshold.into() {
@@ -99,23 +99,14 @@ pub fn build_mint_messages(
     vec![mint_msg.into(), mint_transfer.into()]
 }
 
-/// Get the majority threshold for the current amount of signers
-/// If the amount if an even number, we return the threshold as half of the signers + 1
-/// If the amount is an odd number, we return the threshold as half of the signers rounded up
-/// to the nearest integer
-/// If the threshold is less than the minimum threshold, we return the minimum threshold
-pub fn get_majority_threshold(signers_count: usize) -> u8 {
-    let threshold = if signers_count % 2 == 0 {
-        (signers_count / 2) + 1
-    } else {
-        (signers_count + 1) / 2
-    };
+/// Get the supermajority threshold for the current amount of signers
+/// The threshold is set to two-thirds of the signers rounded up to the nearest integer.
+/// If the threshold is less than the minimum threshold, we return the minimum threshold.
+pub fn get_supermajority_threshold(signers_count: usize) -> u8 {
+    let threshold = ((2 * signers_count + 2) / 3).max(MIN_SIGNER_THRESHOLD as usize);
 
     // Ensure the threshold is not less than MIN_SIGNER_THRESHOLD
-    threshold
-        .try_into()
-        .unwrap_or(MIN_SIGNER_THRESHOLD)
-        .max(MIN_SIGNER_THRESHOLD)
+    threshold.try_into().unwrap_or(MIN_SIGNER_THRESHOLD)
 }
 
 /// Checks that the given channel and port is valid
@@ -144,22 +135,22 @@ mod testing {
     #[test]
     fn test_threshold_calculation() {
         // Test the threshold calculation
-        assert_eq!(get_majority_threshold(0), MIN_SIGNER_THRESHOLD);
-        assert_eq!(get_majority_threshold(1), MIN_SIGNER_THRESHOLD);
-        assert_eq!(get_majority_threshold(2), MIN_SIGNER_THRESHOLD);
-        assert_eq!(get_majority_threshold(3), 2);
-        assert_eq!(get_majority_threshold(4), 3);
-        assert_eq!(get_majority_threshold(5), 3);
-        assert_eq!(get_majority_threshold(6), 4);
-        assert_eq!(get_majority_threshold(7), 4);
-        assert_eq!(get_majority_threshold(8), 5);
-        assert_eq!(get_majority_threshold(9), 5);
-        assert_eq!(get_majority_threshold(10), 6);
+        assert_eq!(get_supermajority_threshold(0), MIN_SIGNER_THRESHOLD);
+        assert_eq!(get_supermajority_threshold(1), MIN_SIGNER_THRESHOLD);
+        assert_eq!(get_supermajority_threshold(2), MIN_SIGNER_THRESHOLD);
+        assert_eq!(get_supermajority_threshold(3), 2);
+        assert_eq!(get_supermajority_threshold(4), 3);
+        assert_eq!(get_supermajority_threshold(5), 4);
+        assert_eq!(get_supermajority_threshold(6), 4);
+        assert_eq!(get_supermajority_threshold(7), 5);
+        assert_eq!(get_supermajority_threshold(8), 6);
+        assert_eq!(get_supermajority_threshold(9), 6);
+        assert_eq!(get_supermajority_threshold(10), 7);
 
-        assert_eq!(get_majority_threshold(50), 26);
-        assert_eq!(get_majority_threshold(51), 26);
+        assert_eq!(get_supermajority_threshold(50), 34);
+        assert_eq!(get_supermajority_threshold(51), 34);
 
-        assert_eq!(get_majority_threshold(99), 50);
-        assert_eq!(get_majority_threshold(100), 51);
+        assert_eq!(get_supermajority_threshold(99), 66);
+        assert_eq!(get_supermajority_threshold(100), 67);
     }
 }

@@ -469,7 +469,6 @@ fn bridge_send(
     let ibc_transfer = NeutronMsg::IbcTransfer {
         source_port: "transfer".to_string(),
         source_channel: config.bridge_ibc_channel,
-        // TODO: Note to auditor, please also confirm that this sender address can't be spoofed on the Hub's side
         sender: env.contract.address.to_string(),
         receiver: destination_addr.clone(),
         token: ibc_coin,
