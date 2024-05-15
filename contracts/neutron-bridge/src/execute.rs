@@ -285,6 +285,13 @@ fn disable_token(
         return Err(ContractError::Unauthorized {});
     }
 
+    // If this token is already disabled, return an error
+    if DISABLED_TOKENS.has(deps.storage, &ticker) {
+        return Err(ContractError::InvalidConfiguration {
+            reason: "This token already disabled".to_string(),
+        });
+    }
+
     // If this token doesn't exist, return an error
     if !TOKEN_MAPPING.has(deps.storage, &ticker) {
         return Err(ContractError::TokenDoesNotExist { ticker });

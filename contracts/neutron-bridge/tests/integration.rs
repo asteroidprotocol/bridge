@@ -985,6 +985,25 @@ fn test_enable_disable_token() {
     // Ensure both sides are disabled, making the count 2
     assert_eq!(response.tokens.len(), 2);
 
+    // Disable a disabled token
+    let err = app
+        .execute_contract(
+            owner.clone(),
+            bridge_address.clone(),
+            &ExecuteMsg::DisableToken {
+                ticker: "TESTTOKEN".to_string(),
+            },
+            &[],
+        )
+        .unwrap_err();
+
+    assert_eq!(
+        err.downcast::<ContractError>().unwrap(),
+        ContractError::InvalidConfiguration {
+            reason: "This token already disabled".to_string()
+        }
+    );
+
     // Enable a token from wrong account
     let err = app
         .execute_contract(
