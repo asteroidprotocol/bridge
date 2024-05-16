@@ -186,15 +186,10 @@ pub fn sudo(
 
 #[cfg(test)]
 mod testing {
-    use std::marker::PhantomData;
-
-    use cosmwasm_std::testing::{mock_env, mock_info, MockApi, MockQuerier, MockStorage};
-    use cosmwasm_std::{
-        coin, coins, to_json_binary, Addr, BankMsg, Coin, ContractResult, OwnedDeps, SubMsg,
-        SystemResult,
-    };
+    use super::*;
+    use cosmwasm_std::testing::{mock_env, mock_info};
+    use cosmwasm_std::{coin, coins, to_json_binary, Addr, BankMsg, SubMsg};
     use neutron_sdk::bindings::msg::IbcFee;
-    use neutron_sdk::query::min_ibc_fee::MinIbcFeeResponse;
     use neutron_sdk::sudo::msg::RequestPacket;
     use osmosis_std::types::osmosis::tokenfactory::v1beta1::MsgMint;
 
@@ -203,57 +198,10 @@ mod testing {
     use crate::sudo::sudo;
     use crate::types::{BridgingAsset, FEE_DENOM};
 
-    use super::*;
+    use crate::mock::mock_neutron_dependencies;
 
     pub const OWNER: &str = "owner";
     pub const USER: &str = "cosmos_user";
-
-    fn mock_neutron_dependencies(
-        balances: &[(&str, &[Coin])],
-    ) -> OwnedDeps<MockStorage, MockApi, MockQuerier<NeutronQuery>, NeutronQuery> {
-        let neutron_custom_handler = |request: &NeutronQuery| {
-            let contract_result: ContractResult<_> = match request {
-                NeutronQuery::MinIbcFee {} => to_json_binary(&MinIbcFeeResponse {
-                    min_fee: IbcFee {
-                        recv_fee: vec![],
-                        ack_fee: coins(100_000, FEE_DENOM),
-                        timeout_fee: coins(100_000, FEE_DENOM),
-                    },
-                })
-                .into(),
-                _ => unimplemented!("Unsupported query request: {:?}", request),
-            };
-            SystemResult::Ok(contract_result)
-        };
-
-        // QueryRequest::Ibc(IbcQuery::ListChannels { .. }) => {
-        //         let response = ListChannelsResponse {
-        //             channels: vec![
-        //                 IbcChannel::new(
-        //                     IbcEndpoint {
-        //                         port_id: "wasm".to_string(),
-        //                         channel_id: "channel-3".to_string(),
-        //                     },
-        //                     IbcEndpoint {
-        //                         port_id: "wasm".to_string(),
-        //                         channel_id: "channel-1".to_string(),
-        //                     },
-        //                     IbcOrder::Unordered,
-        //                     "version",
-        //                     "connection-1",
-        //                 ),
-        //             ],
-        //         };
-        //         SystemResult::Ok(to_json_binary(&response).into())
-        //     }
-
-        OwnedDeps {
-            storage: MockStorage::default(),
-            api: MockApi::default(),
-            querier: MockQuerier::new(balances).with_custom_handler(neutron_custom_handler),
-            custom_query_type: PhantomData,
-        }
-    }
 
     #[test]
     fn test_bridge_sudo_success() {

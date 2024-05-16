@@ -112,16 +112,22 @@ pub fn get_supermajority_threshold(signers_count: usize) -> u8 {
 /// Checks that the given channel and port is valid
 pub fn validate_channel(
     querier: QuerierWrapper<NeutronQuery>,
-    given_channel: &String,
+    given_channel: &str,
 ) -> Result<(), ContractError> {
-    let ChannelResponse { channel } = querier.query(
-        &IbcQuery::Channel {
-            channel_id: given_channel.to_string(),
-            port_id: Some("transfer".to_string()),
-        }
-        .into(),
-    )?;
-    channel
+    let response: ChannelResponse = querier
+        .query(
+            &IbcQuery::Channel {
+                channel_id: given_channel.to_string(),
+                port_id: Some("transfer".to_string()),
+            }
+            .into(),
+        )
+        .map_err(|_| ContractError::InvalidConfiguration {
+            reason: "The provided IBC channel is invalid".to_string(),
+        })?;
+
+    response
+        .channel
         .map(|_| ())
         .ok_or_else(|| ContractError::InvalidConfiguration {
             reason: "The provided IBC channel is invalid".to_string(),

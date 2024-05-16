@@ -161,29 +161,28 @@ fn test_instantiate() {
         }
     );
 
-    // TODO: Add additional invalid IBC channel tests
-    // let err = app
-    //     .instantiate_contract(
-    //         contract_code,
-    //         owner.clone(),
-    //         &InstantiateMsg {
-    //             owner: owner.to_string(),
-    //             ibc_timeout_seconds: 10,
-    //             bridge_ibc_channel: "channel-1".to_string(),
-    //             bridge_chain_id: "".to_string(),
-    //         },
-    //         &[],
-    //         "Asteroid Bridge",
-    //         None,
-    //     )
-    //     .unwrap_err();
+    let err = app
+        .instantiate_contract(
+            contract_code,
+            owner.clone(),
+            &InstantiateMsg {
+                owner: owner.to_string(),
+                ibc_timeout_seconds: 10,
+                bridge_ibc_channel: "channel-1".to_string(),
+                bridge_chain_id: "".to_string(),
+            },
+            &[],
+            "Asteroid Bridge",
+            None,
+        )
+        .unwrap_err();
 
-    // assert_eq!(
-    //     err.downcast::<ContractError>().unwrap(),
-    //     ContractError::InvalidConfiguration {
-    //         reason: "The provided IBC channel is invalid".to_string()
-    //     }
-    // );
+    assert_eq!(
+        err.downcast::<ContractError>().unwrap(),
+        ContractError::InvalidConfiguration {
+            reason: "The provided IBC channel is invalid".to_string()
+        }
+    );
 
     let err = app
         .instantiate_contract(

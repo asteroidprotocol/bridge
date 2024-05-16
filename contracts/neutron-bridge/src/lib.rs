@@ -7,3 +7,6 @@ pub mod query;
 pub mod state;
 pub mod sudo;
 pub mod types;
+
+#[cfg(test)]
+mod mock;

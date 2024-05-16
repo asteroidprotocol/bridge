@@ -679,48 +679,19 @@ fn min_ntrn_ibc_fee(fee: IbcFee) -> IbcFee {
 
 #[cfg(test)]
 mod testing {
-    use std::marker::PhantomData;
-
-    use cosmwasm_std::testing::{mock_env, mock_info, MockApi, MockQuerier, MockStorage};
-    use cosmwasm_std::{
-        coins, to_json_binary, ContractResult, CosmosMsg, OwnedDeps, SubMsg, SystemResult,
-    };
-    use neutron_sdk::query::min_ibc_fee::MinIbcFeeResponse;
-
-    use crate::contract::instantiate;
-    use crate::msg::InstantiateMsg;
 
     use super::*;
+
+    use cosmwasm_std::testing::{mock_env, mock_info};
+    use cosmwasm_std::{coins, CosmosMsg, SubMsg};
+
+    use crate::contract::instantiate;
+    use crate::mock::mock_neutron_dependencies;
+    use crate::msg::InstantiateMsg;
 
     pub const OWNER: &str = "owner";
     pub const NOT_OWNER: &str = "not_owner";
     pub const USER: &str = "cosmos_user";
-
-    fn mock_neutron_dependencies(
-        balances: &[(&str, &[Coin])],
-    ) -> OwnedDeps<MockStorage, MockApi, MockQuerier<NeutronQuery>, NeutronQuery> {
-        let neutron_custom_handler = |request: &NeutronQuery| {
-            let contract_result: ContractResult<_> = match request {
-                NeutronQuery::MinIbcFee {} => to_json_binary(&MinIbcFeeResponse {
-                    min_fee: IbcFee {
-                        recv_fee: vec![],
-                        ack_fee: coins(100_000, FEE_DENOM),
-                        timeout_fee: coins(100_000, FEE_DENOM),
-                    },
-                })
-                .into(),
-                _ => unimplemented!("Unsupported query request: {:?}", request),
-            };
-            SystemResult::Ok(contract_result)
-        };
-
-        OwnedDeps {
-            storage: MockStorage::default(),
-            api: MockApi::default(),
-            querier: MockQuerier::new(balances).with_custom_handler(neutron_custom_handler),
-            custom_query_type: PhantomData,
-        }
-    }
 
     #[test]
     fn test_bridge_send() {
@@ -736,7 +707,7 @@ mod testing {
             InstantiateMsg {
                 owner: OWNER.to_string(),
                 bridge_chain_id: "localgaia-1".to_string(),
-                bridge_ibc_channel: "channel-1".to_string(),
+                bridge_ibc_channel: "channel-0".to_string(),
                 ibc_timeout_seconds: 300,
             },
         )
@@ -791,7 +762,7 @@ mod testing {
         // Verify the memo sent is correct
         assert_eq!(response.messages[1].msg,CosmosMsg::Custom(NeutronMsg::IbcTransfer {
                     source_port: "transfer".to_string(),
-                    source_channel: "channel-1".to_string(),
+                    source_channel: "channel-0".to_string(),
                     sender: env.contract.address.to_string(),
                     receiver: USER.to_string(),
                     token: coin(1, "untrn"),
