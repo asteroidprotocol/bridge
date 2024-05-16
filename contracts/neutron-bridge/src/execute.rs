@@ -340,9 +340,10 @@ fn bridge_receive(
     // Store the transaction hash to prevent replay attacks
     HANDLED_TRANSACTIONS.save(deps.storage, &transaction_hash, &true)?;
 
-    // Build the attestation message
+    // Build the attestation message to verify
+    // The format is {source_chain_id}{transaction_hash_from_source_chain}{ticker}{amount}{local_chain_id}{contract_address}{destination_address}
+    // cosmoshub-4TXHASHticker80000neutron-1neutron1contractneutron1destination
     let attestation = format!(
-        // source_chain_id, transaction_hash, ticker, amount
         "{}{}{}{}{}{}{}",
         source_chain_id,
         transaction_hash,
