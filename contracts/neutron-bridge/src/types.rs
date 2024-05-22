@@ -9,7 +9,7 @@ pub const MAX_IBC_TIMEOUT_SECONDS: u64 = 60 * 60;
 
 pub const FEE_DENOM: &str = "untrn";
 // Signer threshold can't be less than this value
-pub const MIN_SIGNER_THRESHOLD: u8 = 2;
+pub const MIN_SIGNER_THRESHOLD: u8 = 1;
 // The reply ID for the instantiate_denom reply when linking a token
 pub const INSTANTIATE_DENOM_REPLY_ID: u64 = 1;
 // The reply ID for IBC transfer to capture the channel and sequence

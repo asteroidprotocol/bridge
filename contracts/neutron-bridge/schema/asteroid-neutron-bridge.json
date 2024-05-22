@@ -492,6 +492,27 @@
         "additionalProperties": false
       },
       {
+        "type": "object",
+        "required": [
+          "token"
+        ],
+        "properties": {
+          "token": {
+            "type": "object",
+            "required": [
+              "ticker"
+            ],
+            "properties": {
+              "ticker": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      {
         "description": "Returns the disabled tokens",
         "type": "object",
         "required": [
@@ -617,6 +638,21 @@
             "maxItems": 2,
             "minItems": 2
           }
+        }
+      },
+      "additionalProperties": false
+    },
+    "token": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "QueryTokenResponse",
+      "type": "object",
+      "properties": {
+        "denom": {
+          "description": "A token denom",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "additionalProperties": false

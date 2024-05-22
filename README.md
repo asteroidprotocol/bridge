@@ -133,6 +133,11 @@ npx lift query -m '{"signers": {}}' asteroid-neutron-bridge
 npx lift query -m '{"tokens": {}}' asteroid-neutron-bridge
 ```
 
+#### Token
+```bash
+npx lift query -m '{"token":{"ticker":"ROIDS"}}' asteroid-neutron-bridge
+```
+
 ### Add signers
 
 1. Generate keys for two signers to `./keys` folder

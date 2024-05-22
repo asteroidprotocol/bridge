@@ -64,6 +64,12 @@ pub fn query_all_tokens(
     Ok(QueryTokensResponse { tokens })
 }
 
+/// Queries a specific token
+pub fn query_token(deps: Deps<NeutronQuery>, ticker: String) -> StdResult<QueryTokenResponse> {
+    let denom = TOKEN_MAPPING.load(deps.storage, &ticker).ok();
+    Ok(QueryTokenResponse { denom })
+}
+
 /// Queries all disabled tokens
 pub fn query_disabled_tokens(
     deps: Deps<NeutronQuery>,

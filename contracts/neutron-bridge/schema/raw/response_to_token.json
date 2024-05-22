@@ -1,0 +1,15 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "QueryTokenResponse",
+  "type": "object",
+  "properties": {
+    "denom": {
+      "description": "A token denom",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "additionalProperties": false
+}
