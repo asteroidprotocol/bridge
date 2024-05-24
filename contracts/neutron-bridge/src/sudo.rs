@@ -38,7 +38,7 @@ pub fn sudo(
 
             // The timeout fees are refunded to the contract in case of ack,
             // let's return that to the original sender
-            let mut refund_messages: Vec<CosmosMsg<NeutronMsg>> = payload
+            let refund_messages: Vec<CosmosMsg<NeutronMsg>> = payload
                 .fees
                 .timeout_fee
                 .iter()
@@ -49,16 +49,6 @@ pub fn sudo(
                     })
                 })
                 .collect::<Vec<CosmosMsg<NeutronMsg>>>();
-
-            // We also need to refund the 1untrn we use to do the actual IBC
-            // transfer
-            refund_messages.push(CosmosMsg::Bank(BankMsg::Send {
-                to_address: payload.sender.to_string(),
-                amount: vec![Coin {
-                    denom: "untrn".to_string(),
-                    amount: Uint128::one(),
-                }],
-            }));
 
             // The IBC transfer succeeded, we can remove the bridging asset from the in-flight
             BRIDGE_INFLIGHT.remove(deps.storage, (&channel_id, sequence_id));
