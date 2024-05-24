@@ -62,27 +62,6 @@
       "additionalProperties": false
     },
     {
-      "type": "object",
-      "required": [
-        "token"
-      ],
-      "properties": {
-        "token": {
-          "type": "object",
-          "required": [
-            "ticker"
-          ],
-          "properties": {
-            "ticker": {
-              "type": "string"
-            }
-          },
-          "additionalProperties": false
-        }
-      },
-      "additionalProperties": false
-    },
-    {
       "description": "Returns the disabled tokens",
       "type": "object",
       "required": [

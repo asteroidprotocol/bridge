@@ -1,9 +1,7 @@
 use cosmwasm_schema::{cw_serde, QueryResponses};
 use cosmwasm_std::Uint128;
 
-use crate::types::{
-    Config, QuerySignersResponse, QueryTokenResponse, QueryTokensResponse, TokenMetadata,
-};
+use crate::types::{Config, QuerySignersResponse, QueryTokensResponse, TokenMetadata};
 
 /// Holds the parameters used for creating a Hub contract
 #[cw_serde]
@@ -118,8 +116,6 @@ pub enum QueryMsg {
         start_after: Option<String>,
         limit: Option<u32>,
     },
-    #[returns(QueryTokenResponse)]
-    Token { ticker: String },
     /// Returns the disabled tokens
     #[returns(QueryTokensResponse)]
     DisabledTokens {
