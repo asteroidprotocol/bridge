@@ -5,13 +5,16 @@ use asteroid_neutron_bridge::msg::{ExecuteMsg, InstantiateMsg, QueryMsg};
 use asteroid_neutron_bridge::query::query;
 use asteroid_neutron_bridge::types::{
     Config, QuerySignersResponse, QueryTokensResponse, TokenMetadata, MAX_IBC_TIMEOUT_SECONDS,
-    MIN_IBC_TIMEOUT_SECONDS, MIN_SIGNER_THRESHOLD,
+    MIN_IBC_TIMEOUT_SECONDS,
 };
 use astroport_test::cw_multi_test::{AppBuilder, Contract, ContractWrapper, Executor};
-use astroport_test::modules::stargate::{MockStargate, StargateApp};
+// use astroport_test::modules::stargate::{MockStargate, StargateApp};
 use cosmwasm_std::{Addr, Coin, Uint128};
 use neutron_sdk::bindings::msg::NeutronMsg;
 use neutron_sdk::bindings::query::NeutronQuery;
+use stargate::MockIbc;
+
+use crate::stargate::{MockStargate, StargateApp};
 
 type NeutronApp = StargateApp<NeutronMsg, NeutronQuery>;
 
@@ -30,16 +33,12 @@ const BRIDGE_SIGNATURE_1: &str =
 const BRIDGE_SIGNATURE_2: &str =
     "+Y5UhcFimBzBnJX8BIFZPR2DjUp3DaYVRF81osV/qx8E4gDWk3z1EtUsLX3oITTld0lc12IQGdpuFcCWDAMVAQ==";
 
+mod stargate;
+
 fn mock_app(owner: &Addr, coins: Vec<Coin>) -> NeutronApp {
     AppBuilder::new_custom()
-        // .with_stargate(StargateKeeper::default())
-        // .with_custom(NeutronMockModule::new())
         .with_stargate(MockStargate::default())
-        // .with_custom(custom)
-        // .with_custom(NeutronMockModule::new())
-        // .with_wasm::<FailingModule<NeutronMsg, NeutronQuery, Empty>, WasmKeeper<_, _>>(
-        //     WasmKeeper::new(),
-        // )
+        .with_ibc(MockIbc::default())
         .build(|router, _, storage| {
             // initialization moved to App construction
             router.bank.init_balance(storage, owner, coins).unwrap()
@@ -69,9 +68,8 @@ fn test_instantiate() {
             owner.clone(),
             &InstantiateMsg {
                 owner: owner.to_string(),
-                signer_threshold: 2,
                 ibc_timeout_seconds: 10,
-                bridge_ibc_channel: "channel-1".to_string(),
+                bridge_ibc_channel: "channel-0".to_string(),
                 bridge_chain_id: "localgaia-1".to_string(),
             },
             &[],
@@ -86,48 +84,18 @@ fn test_instantiate() {
         .query_wasm_smart(bridge_address, &QueryMsg::Config {})
         .unwrap();
 
-    assert_eq!(response.signer_threshold, 2);
     assert_eq!(response.bridge_chain_id, "localgaia-1");
-    assert_eq!(response.bridge_ibc_channel, "channel-1");
+    assert_eq!(response.bridge_ibc_channel, "channel-0");
     assert_eq!(response.ibc_timeout_seconds, 10);
 
-    // Test invalid configurations
     let err = app
         .instantiate_contract(
             contract_code,
             owner.clone(),
             &InstantiateMsg {
                 owner: owner.to_string(),
-                signer_threshold: 0,
-                ibc_timeout_seconds: 10,
-                bridge_ibc_channel: "channel-1".to_string(),
-                bridge_chain_id: "localgaia-1".to_string(),
-            },
-            &[],
-            "Asteroid Bridge",
-            None,
-        )
-        .unwrap_err();
-
-    assert_eq!(
-        err.downcast::<ContractError>().unwrap(),
-        ContractError::InvalidConfiguration {
-            reason: format!(
-                "Invalid signer threshold, the minimum is {}",
-                MIN_SIGNER_THRESHOLD
-            )
-        }
-    );
-
-    let err = app
-        .instantiate_contract(
-            contract_code,
-            owner.clone(),
-            &InstantiateMsg {
-                owner: owner.to_string(),
-                signer_threshold: 2,
                 ibc_timeout_seconds: MIN_IBC_TIMEOUT_SECONDS - 1,
-                bridge_ibc_channel: "channel-1".to_string(),
+                bridge_ibc_channel: "channel-0".to_string(),
                 bridge_chain_id: "localgaia-1".to_string(),
             },
             &[],
@@ -151,9 +119,8 @@ fn test_instantiate() {
             owner.clone(),
             &InstantiateMsg {
                 owner: owner.to_string(),
-                signer_threshold: 2,
                 ibc_timeout_seconds: MAX_IBC_TIMEOUT_SECONDS + 1,
-                bridge_ibc_channel: "channel-1".to_string(),
+                bridge_ibc_channel: "channel-0".to_string(),
                 bridge_chain_id: "localgaia-1".to_string(),
             },
             &[],
@@ -177,7 +144,6 @@ fn test_instantiate() {
             owner.clone(),
             &InstantiateMsg {
                 owner: owner.to_string(),
-                signer_threshold: 2,
                 ibc_timeout_seconds: 10,
                 bridge_ibc_channel: "".to_string(),
                 bridge_chain_id: "localgaia-1".to_string(),
@@ -201,7 +167,29 @@ fn test_instantiate() {
             owner.clone(),
             &InstantiateMsg {
                 owner: owner.to_string(),
-                signer_threshold: 2,
+                ibc_timeout_seconds: 10,
+                bridge_ibc_channel: "channel-1".to_string(),
+                bridge_chain_id: "".to_string(),
+            },
+            &[],
+            "Asteroid Bridge",
+            None,
+        )
+        .unwrap_err();
+
+    assert_eq!(
+        err.downcast::<ContractError>().unwrap(),
+        ContractError::InvalidConfiguration {
+            reason: "The provided IBC channel is invalid".to_string()
+        }
+    );
+
+    let err = app
+        .instantiate_contract(
+            contract_code,
+            owner.clone(),
+            &InstantiateMsg {
+                owner: owner.to_string(),
                 ibc_timeout_seconds: 10,
                 bridge_ibc_channel: "channel-0".to_string(),
                 bridge_chain_id: "".to_string(),
@@ -233,7 +221,6 @@ fn test_add_signer() {
             owner.clone(),
             &InstantiateMsg {
                 owner: owner.to_string(),
-                signer_threshold: 2,
                 ibc_timeout_seconds: 10,
                 bridge_ibc_channel: "channel-0".to_string(),
                 bridge_chain_id: "localgaia-1".to_string(),
@@ -275,6 +262,26 @@ fn test_add_signer() {
         &[],
     )
     .unwrap();
+
+    // Add a another signer with duplicate name but new key
+    let err = app
+        .execute_contract(
+            owner.clone(),
+            bridge_address.clone(),
+            &ExecuteMsg::AddSigner {
+                name: "signer".to_string(),
+                public_key_base64: VALID_SIGNER_2.to_string(),
+            },
+            &[],
+        )
+        .unwrap_err();
+
+    assert_eq!(
+        err.downcast::<ContractError>().unwrap(),
+        ContractError::InvalidConfiguration {
+            reason: "The name 'signer' is already linked to a public key".to_string()
+        }
+    );
 
     // Add a duplicate signer
     let err = app
@@ -336,7 +343,6 @@ fn test_remove_signer() {
             owner.clone(),
             &InstantiateMsg {
                 owner: owner.to_string(),
-                signer_threshold: 2,
                 ibc_timeout_seconds: 10,
                 bridge_ibc_channel: "channel-0".to_string(),
                 bridge_chain_id: "localgaia-1".to_string(),
@@ -447,7 +453,6 @@ fn test_update_config() {
             owner.clone(),
             &InstantiateMsg {
                 owner: owner.to_string(),
-                signer_threshold: 2,
                 ibc_timeout_seconds: 10,
                 bridge_ibc_channel: "channel-0".to_string(),
                 bridge_chain_id: "localgaia-1".to_string(),
@@ -464,8 +469,6 @@ fn test_update_config() {
             not_owner.clone(),
             bridge_address.clone(),
             &ExecuteMsg::UpdateConfig {
-                signer_threshold: Some(1),
-                bridge_chain_id: None,
                 bridge_ibc_channel: None,
                 ibc_timeout_seconds: None,
             },
@@ -478,37 +481,10 @@ fn test_update_config() {
         ContractError::Unauthorized {}
     );
 
-    // Attempt to update config with invalid signer threshold
-    let err = app
-        .execute_contract(
-            owner.clone(),
-            bridge_address.clone(),
-            &ExecuteMsg::UpdateConfig {
-                signer_threshold: Some(MIN_SIGNER_THRESHOLD - 1),
-                bridge_chain_id: None,
-                bridge_ibc_channel: None,
-                ibc_timeout_seconds: None,
-            },
-            &[],
-        )
-        .unwrap_err();
-
-    assert_eq!(
-        err.downcast::<ContractError>().unwrap(),
-        ContractError::InvalidConfiguration {
-            reason: format!(
-                "Invalid signer threshold, the minimum is {}",
-                MIN_SIGNER_THRESHOLD
-            )
-        }
-    );
-
     app.execute_contract(
         owner.clone(),
         bridge_address.clone(),
         &ExecuteMsg::UpdateConfig {
-            signer_threshold: Some(MIN_SIGNER_THRESHOLD + 1),
-            bridge_chain_id: None,
             bridge_ibc_channel: None,
             ibc_timeout_seconds: None,
         },
@@ -516,34 +492,10 @@ fn test_update_config() {
     )
     .unwrap();
 
-    // Attempt blank chain ID
-    let err = app
-        .execute_contract(
-            owner.clone(),
-            bridge_address.clone(),
-            &ExecuteMsg::UpdateConfig {
-                signer_threshold: None,
-                bridge_chain_id: Some("".to_string()),
-                bridge_ibc_channel: None,
-                ibc_timeout_seconds: None,
-            },
-            &[],
-        )
-        .unwrap_err();
-
-    assert_eq!(
-        err.downcast::<ContractError>().unwrap(),
-        ContractError::InvalidConfiguration {
-            reason: "The source chain ID must be specified".to_string()
-        }
-    );
-
     app.execute_contract(
         owner.clone(),
         bridge_address.clone(),
         &ExecuteMsg::UpdateConfig {
-            signer_threshold: None,
-            bridge_chain_id: Some("newgaia-1".to_string()),
             bridge_ibc_channel: None,
             ibc_timeout_seconds: None,
         },
@@ -557,8 +509,6 @@ fn test_update_config() {
             owner.clone(),
             bridge_address.clone(),
             &ExecuteMsg::UpdateConfig {
-                signer_threshold: None,
-                bridge_chain_id: None,
                 bridge_ibc_channel: Some("".to_string()),
                 ibc_timeout_seconds: None,
             },
@@ -577,8 +527,6 @@ fn test_update_config() {
         owner.clone(),
         bridge_address.clone(),
         &ExecuteMsg::UpdateConfig {
-            signer_threshold: None,
-            bridge_chain_id: None,
             bridge_ibc_channel: Some("channel-9".to_string()),
             ibc_timeout_seconds: None,
         },
@@ -592,8 +540,6 @@ fn test_update_config() {
             owner.clone(),
             bridge_address.clone(),
             &ExecuteMsg::UpdateConfig {
-                signer_threshold: None,
-                bridge_chain_id: None,
                 bridge_ibc_channel: None,
                 ibc_timeout_seconds: Some(MIN_IBC_TIMEOUT_SECONDS - 1),
             },
@@ -615,8 +561,6 @@ fn test_update_config() {
             owner.clone(),
             bridge_address.clone(),
             &ExecuteMsg::UpdateConfig {
-                signer_threshold: None,
-                bridge_chain_id: None,
                 bridge_ibc_channel: None,
                 ibc_timeout_seconds: Some(MAX_IBC_TIMEOUT_SECONDS + 1),
             },
@@ -637,8 +581,6 @@ fn test_update_config() {
         owner.clone(),
         bridge_address.clone(),
         &ExecuteMsg::UpdateConfig {
-            signer_threshold: None,
-            bridge_chain_id: None,
             bridge_ibc_channel: None,
             ibc_timeout_seconds: Some(MIN_IBC_TIMEOUT_SECONDS + 1),
         },
@@ -652,8 +594,7 @@ fn test_update_config() {
         .query_wasm_smart(&bridge_address, &QueryMsg::Config {})
         .unwrap();
 
-    assert_eq!(response.signer_threshold, MIN_SIGNER_THRESHOLD + 1);
-    assert_eq!(response.bridge_chain_id, "newgaia-1");
+    assert_eq!(response.bridge_chain_id, "localgaia-1");
     assert_eq!(response.bridge_ibc_channel, "channel-9");
     assert_eq!(response.ibc_timeout_seconds, MIN_IBC_TIMEOUT_SECONDS + 1);
 }
@@ -670,7 +611,6 @@ fn test_link_token() {
             owner.clone(),
             &InstantiateMsg {
                 owner: owner.to_string(),
-                signer_threshold: 2,
                 ibc_timeout_seconds: 10,
                 bridge_ibc_channel: "channel-0".to_string(),
                 bridge_chain_id: "localgaia-1".to_string(),
@@ -885,7 +825,6 @@ fn test_enable_disable_token() {
             owner.clone(),
             &InstantiateMsg {
                 owner: owner.to_string(),
-                signer_threshold: 2,
                 ibc_timeout_seconds: 10,
                 bridge_ibc_channel: "channel-0".to_string(),
                 bridge_chain_id: "localgaia-1".to_string(),
@@ -1042,7 +981,27 @@ fn test_enable_disable_token() {
         )
         .unwrap();
 
-    assert_eq!(response.tokens.len(), 1);
+    // Ensure both sides are disabled, making the count 2
+    assert_eq!(response.tokens.len(), 2);
+
+    // Disable a disabled token
+    let err = app
+        .execute_contract(
+            owner.clone(),
+            bridge_address.clone(),
+            &ExecuteMsg::DisableToken {
+                ticker: "TESTTOKEN".to_string(),
+            },
+            &[],
+        )
+        .unwrap_err();
+
+    assert_eq!(
+        err.downcast::<ContractError>().unwrap(),
+        ContractError::InvalidConfiguration {
+            reason: "This token already disabled".to_string()
+        }
+    );
 
     // Enable a token from wrong account
     let err = app
@@ -1084,9 +1043,8 @@ fn test_enable_disable_token() {
         )
         .unwrap();
 
+    // Both sides should be enabled, making the disabled tokens 0
     assert_eq!(response.tokens.len(), 0);
-
-    // TODO: Test bridging with disabled token
 }
 
 #[test]
@@ -1102,7 +1060,6 @@ fn test_bridge_receive() {
             owner.clone(),
             &InstantiateMsg {
                 owner: owner.to_string(),
-                signer_threshold: 2,
                 ibc_timeout_seconds: 10,
                 bridge_ibc_channel: "channel-0".to_string(),
                 bridge_chain_id: "localgaia-1".to_string(),
@@ -1279,6 +1236,54 @@ fn test_bridge_receive() {
     let res = app.wrap().query_all_balances("user1").unwrap();
     assert_eq!(res.len(), 0);
 
+    // Remove a signer to trigger a threshold too low
+    app.execute_contract(
+        owner.clone(),
+        bridge_address.clone(),
+        &ExecuteMsg::RemoveSigner {
+            public_key_base64: VALID_SIGNER_2.to_string(),
+        },
+        &[],
+    )
+    .unwrap();
+
+    // Bridge transaction with insufficient signatures
+    let err = app
+        .execute_contract(
+            not_owner.clone(),
+            bridge_address.clone(),
+            &ExecuteMsg::Receive {
+                source_chain_id: "localgaia-1".to_string(),
+                transaction_hash: "TXHASH1".to_string(),
+                ticker: "TESTTOKEN".to_string(),
+                amount: Uint128::from(1000u64),
+                destination_addr: "user1".to_string(),
+                signatures: vec![
+                    BRIDGE_SIGNATURE_1.to_string().clone(),
+                    BRIDGE_SIGNATURE_2.to_string().clone(),
+                ],
+            },
+            &[],
+        )
+        .unwrap_err();
+
+    assert_eq!(
+        err.downcast::<ContractError>().unwrap(),
+        ContractError::ThresholdNotMet {}
+    );
+
+    // Add the signer back
+    app.execute_contract(
+        owner.clone(),
+        bridge_address.clone(),
+        &ExecuteMsg::AddSigner {
+            name: "signer2".to_string(),
+            public_key_base64: VALID_SIGNER_2.to_string(),
+        },
+        &[],
+    )
+    .unwrap();
+
     // Valid bridge transaction
     app.execute_contract(
         not_owner.clone(),
@@ -1397,8 +1402,8 @@ fn test_bridge_receive() {
     );
 }
 
-// TODO The Full bridge send test is currently not available due to custom Neutron queries
-// that need to be implemented
+// This test is partial, the rest is tested in a unit test to
+// verify IBC interactions
 #[test]
 fn test_bridge_send() {
     let owner = Addr::unchecked("owner");
@@ -1425,7 +1430,6 @@ fn test_bridge_send() {
             owner.clone(),
             &InstantiateMsg {
                 owner: owner.to_string(),
-                signer_threshold: 2,
                 ibc_timeout_seconds: 10,
                 bridge_ibc_channel: "channel-0".to_string(),
                 bridge_chain_id: "localgaia-1".to_string(),
@@ -1629,116 +1633,4 @@ fn test_bridge_send() {
             ticker: "TESTTOKEN".to_string()
         }
     );
-
-    // TODO: The remaining part of this test will be fixed soon
-
-    // TODO: Ensure the user balance was updated
-
-    // Ensure that the total supply was reduced
-    // let res = app
-    //     .wrap()
-    //     .query_supply("factory/contract0/TESTTOKEN".to_string())
-    //     .unwrap();
-    // assert_eq!(res.amount, Uint128::from(999u64));
 }
-
-// pub struct NeutronMockModule {}
-
-// impl NeutronMockModule {
-//     pub fn new() -> Self {
-//         Self {}
-//     }
-// }
-
-// impl Module for NeutronMockModule {
-//     type ExecT = NeutronMsg;
-//     type QueryT = NeutronQuery;
-//     type SudoT = Empty;
-
-//     fn execute<ExecC, QueryC>(
-//         &self,
-//         api: &dyn Api,
-//         storage: &mut dyn Storage,
-//         router: &dyn CosmosRouter<ExecC = ExecC, QueryC = QueryC>,
-//         block: &BlockInfo,
-//         _sender: Addr,
-//         msg: Self::ExecT,
-//     ) -> AnyResult<AppResponse>
-//     where
-//         ExecC: Debug + Clone + PartialEq + JsonSchema + DeserializeOwned + 'static,
-//         QueryC: CustomQuery + DeserializeOwned + 'static,
-//     {
-//         unimplemented!("not implemented")
-//     }
-
-//     fn sudo<ExecC, QueryC>(
-//         &self,
-//         _api: &dyn Api,
-//         _storage: &mut dyn Storage,
-//         _router: &dyn CosmosRouter<ExecC = ExecC, QueryC = QueryC>,
-//         _block: &BlockInfo,
-//         _msg: Self::SudoT,
-//     ) -> AnyResult<AppResponse>
-//     where
-//         ExecC: Debug + Clone + PartialEq + JsonSchema + DeserializeOwned + 'static,
-//         QueryC: CustomQuery + DeserializeOwned + 'static,
-//     {
-//         unimplemented!("not implemented")
-//     }
-
-//     fn query(
-//         &self,
-//         _api: &dyn Api,
-//         _storage: &dyn Storage,
-//         _querier: &dyn Querier,
-//         _block: &BlockInfo,
-//         request: Self::QueryT,
-//     ) -> AnyResult<Binary> {
-//         match request {
-//             NeutronQuery::MinIbcFee {} => Ok(to_json_binary(&MinIbcFeeResponse {
-//                 min_fee: IbcFee {
-//                     ack_fee: [Coin {
-//                         denom: "untrn".to_string(),
-//                         amount: 1u128.into(),
-//                     }]
-//                     .to_vec(),
-//                     recv_fee: [Coin {
-//                         denom: "untrn".to_string(),
-//                         amount: 1u128.into(),
-//                     }]
-//                     .to_vec(),
-//                     timeout_fee: [Coin {
-//                         denom: "untrn".to_string(),
-//                         amount: 1u128.into(),
-//                     }]
-//                     .to_vec(),
-//                 },
-//             })?),
-//             // InjectiveQuery::SpotMarket { market_id } => {
-//             //     // let markets = self.markets.borrow();
-//             //     // if let Some((base_denom, quote_denom)) = markets.get(&market_id) {
-//             //     //     // TODO: save min_quantity_tick_size and min_price_tick_size somewhere if needed
-//             //     //     // as currently they are hardcoded
-//             //     //     Ok(to_json_binary(&SpotMarketResponse {
-//             //     //         market: Some(SpotMarket {
-//             //     //             ticker: base_denom.to_string() + "/" + quote_denom,
-//             //     //             market_id,
-//             //     //             min_quantity_tick_size: 1000000000000000u128.into(), // from the real INJ/USDT market, 0.001 INJ
-//             //     //             base_denom: base_denom.clone(),
-//             //     //             quote_denom: quote_denom.clone(),
-//             //     //             status: Default::default(),
-//             //     //             min_price_tick_size: f64_to_dec::<Decimal256>(0.000000000000001)
-//             //     //                 .conv()?, // 0.000000000000001
-//             //     //             maker_fee_rate: Default::default(),
-//             //     //             taker_fee_rate: Default::default(),
-//             //     //             relayer_fee_share_rate: Default::default(),
-//             //     //         }),
-//             //     //     })?)
-//             //     // } else {
-//             //     //     Ok(to_json_binary(&SpotMarketResponse { market: None })?)
-//             //     // }
-//             // }
-//             _ => unimplemented!("not implemented"),
-//         }
-//     }
-// }
