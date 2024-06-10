@@ -8,8 +8,6 @@ use crate::types::{Config, QuerySignersResponse, QueryTokensResponse, TokenMetad
 pub struct InstantiateMsg {
     /// The contract owner
     pub owner: String,
-    /// The threshold of signers needed to confirm a message
-    pub signer_threshold: u8,
     /// The chain ID this bridge is connected to
     pub bridge_chain_id: String,
     /// The IBC channel to the Cosmos Hub
@@ -21,7 +19,10 @@ pub struct InstantiateMsg {
 /// The contract migration message
 /// We currently take no arguments for migrations
 #[cw_serde]
-pub struct MigrateMsg {}
+pub struct MigrateMsg {
+    /// The chain ID this bridge is connected to
+    pub bridge_chain_id: Option<String>,
+}
 
 /// Describes the execute messages available in the contract
 #[cw_serde]
@@ -65,9 +66,6 @@ pub enum ExecuteMsg {
         /// The destination address to transfer the CFT-20-equivalent to
         destination_addr: String,
     },
-    /// Retry a failed IBC transaction, the failure IDs can be retrieved using
-    /// > neutrond query contractmanager failures [contract-address]
-    RetrySend { failure_id: u64 },
     /// Adds a signer to the allowed list for signature verification
     AddSigner {
         /// The public key in base64. This is the raw key without the ASN.1
@@ -84,11 +82,7 @@ pub enum ExecuteMsg {
     },
     /// Update the contract config
     UpdateConfig {
-        /// The new threshold of signers needed to confirm a message
-        signer_threshold: Option<u8>,
-        /// The chain ID this bridge is connected to
-        bridge_chain_id: Option<String>,
-        /// The new IBC channel to the Cosmos Hub to use
+        /// The IBC channel to the Cosmos Hub
         bridge_ibc_channel: Option<String>,
         /// The timeout in seconds for IBC packets
         ibc_timeout_seconds: Option<u64>,

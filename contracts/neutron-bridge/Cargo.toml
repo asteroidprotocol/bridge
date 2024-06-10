@@ -37,6 +37,7 @@ osmosis-std = "0.21"
 neutron-sdk = "0.8"
 astroport = "3.11.1"
 ed25519-dalek = "2"
+serde-json-wasm = "1.0.1"
 
 [dev-dependencies]
 # cw-multi-test = "0.16.5"
@@ -44,6 +45,10 @@ anyhow = "1.0"
 astroport-test = { git = "https://github.com/astroport-fi/hidden_astroport_core", branch = "feat/lp-tokenfactory", features = [
     "cosmwasm_1_1",
 ] }
-cw-multi-test = { git = "https://github.com/astroport-fi/cw-multi-test", branch = "feat/bank_with_send_hooks", features = [
+# cw-multi-test = { git = "https://github.com/astroport-fi/cw-multi-test", branch = "feat/bank_with_send_hooks", features = [
+#     "cosmwasm_1_1",
+# ] }
+
+cw-multi-test = { git = "https://github.com/astroport-fi/cw-multi-test", branch = "feat/bank_with_send_hooks_1_0", features = [
     "cosmwasm_1_1",
 ] }

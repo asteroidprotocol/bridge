@@ -1,28 +1,28 @@
 use astroport::common::{claim_ownership, drop_ownership_proposal, propose_new_owner};
 use base64::{engine::general_purpose, Engine as _};
-use cosmwasm_std::{coin, entry_point, BankMsg, Coin, Reply, StdError, SubMsg, Uint128};
+use cosmwasm_std::{coin, entry_point, Coin, Reply, StdError, SubMsg, Uint128};
 use cosmwasm_std::{DepsMut, Env, MessageInfo, Response};
 use ed25519_dalek::{VerifyingKey, PUBLIC_KEY_LENGTH};
 
-use neutron_sdk::bindings::msg::{IbcFee, NeutronMsg};
+use neutron_sdk::bindings::msg::{IbcFee, MsgIbcTransferResponse, NeutronMsg};
 use neutron_sdk::bindings::query::NeutronQuery;
 use neutron_sdk::query::min_ibc_fee::query_min_ibc_fee;
 use neutron_sdk::sudo::msg::RequestPacketTimeoutHeight;
 use osmosis_std::types::cosmos::bank::v1beta1::{DenomUnit, Metadata};
 use osmosis_std::types::osmosis::tokenfactory::v1beta1::{
-    MsgBurn, MsgCreateDenom, MsgCreateDenomResponse, MsgMint, MsgSetDenomMetadata,
+    MsgBurn, MsgCreateDenom, MsgCreateDenomResponse, MsgSetDenomMetadata,
 };
 
+use crate::helpers::{build_mint_messages, validate_channel, verify_signatures};
 use crate::msg::ExecuteMsg;
 use crate::state::{
-    DISABLED_TOKENS, HANDLED_TRANSACTIONS, OWNERSHIP_PROPOSAL, SIGNERS, TOKEN_MAPPING,
-    TOKEN_METADATA,
+    BRIDGE_CURRENT_PAYLOAD, BRIDGE_INFLIGHT, DISABLED_TOKENS, HANDLED_TRANSACTIONS,
+    OWNERSHIP_PROPOSAL, SIGNERS, TOKEN_MAPPING, TOKEN_METADATA,
 };
 use crate::types::{
-    Config, TokenMetadata, FEE_DENOM, INSTANTIATE_DENOM_REPLY_ID, MAX_IBC_TIMEOUT_SECONDS,
-    MIN_IBC_TIMEOUT_SECONDS, MIN_SIGNER_THRESHOLD,
+    BridgingAsset, Config, TokenMetadata, FEE_DENOM, IBC_REPLY_HANDLER_ID,
+    INSTANTIATE_DENOM_REPLY_ID, MAX_IBC_TIMEOUT_SECONDS, MIN_IBC_TIMEOUT_SECONDS,
 };
-use crate::verifier::verify_signatures;
 use crate::{error::ContractError, state::CONFIG};
 
 /// Exposes all the execute functions available in the contract
@@ -33,10 +33,9 @@ use crate::{error::ContractError, state::CONFIG};
 /// * **ExecuteMsg::DisableToken { ticker }** Disable a token from being bridged
 /// * **ExecuteMsg::Receive { source_chain_id, transaction_hash, ticker, amount, destination_addr, signatures }** Receive CFT-20 token message from the Hub
 /// * **ExecuteMsg::Send { destination_addr }** Send CFT-20 token back to the Hub
-/// * **ExecuteMsg::RetrySend { failure_id }** Retry a failed IBC transaction, the failure IDs can be retrieved using
 /// * **ExecuteMsg::AddSigner { public_key_base64, name }** Adds a signer to the allowed list for signature verification
 /// * **ExecuteMsg::RemoveSigner { public_key_base64 }** Remove a signer from the allowed list for signature verification
-/// * **ExecuteMsg::UpdateConfig { signer_threshold, bridge_chain_id, bridge_ibc_channel, ibc_timeout_seconds }** Update the contract config
+/// * **ExecuteMsg::UpdateConfig { bridge_ibc_channel, ibc_timeout_seconds }** Update the contract config
 /// * **ExecuteMsg::ProposeNewOwner { owner, expires_in }** Propose a new owner for the contract
 /// * **ExecuteMsg::DropOwnershipProposal {}** Remove the ownership transfer proposal
 /// * **ExecuteMsg::ClaimOwnership {}** Claim contract ownership
@@ -73,7 +72,6 @@ pub fn execute(
             signatures,
         ),
         ExecuteMsg::Send { destination_addr } => bridge_send(deps, env, info, destination_addr),
-        ExecuteMsg::RetrySend { failure_id } => retry_send(failure_id),
         ExecuteMsg::AddSigner {
             public_key_base64,
             name,
@@ -82,18 +80,9 @@ pub fn execute(
             remove_signer(deps, env, info, public_key_base64)
         }
         ExecuteMsg::UpdateConfig {
-            signer_threshold,
-            bridge_chain_id,
             bridge_ibc_channel,
             ibc_timeout_seconds,
-        } => update_config(
-            deps,
-            info,
-            signer_threshold,
-            bridge_chain_id,
-            bridge_ibc_channel,
-            ibc_timeout_seconds,
-        ),
+        } => update_config(deps, info, bridge_ibc_channel, ibc_timeout_seconds),
         ExecuteMsg::ProposeNewOwner { owner, expires_in } => {
             let config = CONFIG.load(deps.storage)?;
             propose_new_owner(
@@ -139,7 +128,6 @@ pub fn reply(
 
             let metadata = TOKEN_METADATA.load(deps.storage)?;
 
-            // TODO: Add back setting denom metadata after figuring out test
             let denom_metadata_msg = MsgSetDenomMetadata {
                 sender: env.contract.address.to_string(),
                 metadata: Some(Metadata {
@@ -175,10 +163,35 @@ pub fn reply(
             TOKEN_METADATA.remove(deps.storage);
 
             Ok(Response::new()
-                // TODO: Add back setting denom metadata after figuring out test
-                // .add_message(denom_metadata_msg)
+                .add_message(denom_metadata_msg)
                 .add_attribute("action", "set_denom_metadata")
                 .add_attribute("ticker", metadata.ticker))
+        }
+        IBC_REPLY_HANDLER_ID => {
+            // Extract the channel and sequence ID from the IBC transfer
+            let resp: MsgIbcTransferResponse = serde_json_wasm::from_slice(
+                msg.result
+                    .into_result()
+                    .map_err(StdError::generic_err)?
+                    .data
+                    .ok_or_else(|| StdError::generic_err("no result"))?
+                    .as_slice(),
+            )
+            .map_err(|e| StdError::generic_err(format!("failed to parse response: {:?}", e)))?;
+            let sequence_id = resp.sequence_id;
+            let channel_id = resp.channel;
+
+            // In order to handle the success/failure sudo call for IBC transfers
+            // we need to capture the CFT-20 assets being bridged back
+            // If it fails, the tokens need to be minted and returned again
+            let payload = BRIDGE_CURRENT_PAYLOAD.load(deps.storage)?;
+            BRIDGE_INFLIGHT.save(deps.storage, (&channel_id.clone(), sequence_id), &payload)?;
+            BRIDGE_CURRENT_PAYLOAD.remove(deps.storage);
+
+            Ok(Response::new()
+                .add_attribute("action", "capture_ibc_transfer")
+                .add_attribute("channel", channel_id)
+                .add_attribute("sequence", sequence_id.to_string()))
         }
         _ => Err(ContractError::InvalidReplyId { id: msg.id }),
     }
@@ -248,7 +261,10 @@ fn enable_token(
         });
     }
 
+    // We need to enable both the CFT-20 ticker and the TokenFactory denom
+    let matching_denom = TOKEN_MAPPING.load(deps.storage, &ticker)?;
     DISABLED_TOKENS.remove(deps.storage, &ticker);
+    DISABLED_TOKENS.remove(deps.storage, &matching_denom);
 
     Ok(Response::new()
         .add_attribute("action", "enable_token")
@@ -269,12 +285,21 @@ fn disable_token(
         return Err(ContractError::Unauthorized {});
     }
 
+    // If this token is already disabled, return an error
+    if DISABLED_TOKENS.has(deps.storage, &ticker) {
+        return Err(ContractError::InvalidConfiguration {
+            reason: "This token already disabled".to_string(),
+        });
+    }
+
     // If this token doesn't exist, return an error
     if !TOKEN_MAPPING.has(deps.storage, &ticker) {
         return Err(ContractError::TokenDoesNotExist { ticker });
     }
-
+    // We need to disable both the CFT-20 ticker and the TokenFactory denom
+    let matching_denom = TOKEN_MAPPING.load(deps.storage, &ticker)?;
     DISABLED_TOKENS.save(deps.storage, &ticker, &true)?;
+    DISABLED_TOKENS.save(deps.storage, &matching_denom, &true)?;
 
     Ok(Response::new()
         .add_attribute("action", "disable_token")
@@ -315,9 +340,10 @@ fn bridge_receive(
     // Store the transaction hash to prevent replay attacks
     HANDLED_TRANSACTIONS.save(deps.storage, &transaction_hash, &true)?;
 
-    // Build the attestation message
+    // Build the attestation message to verify
+    // The format is {source_chain_id}{transaction_hash_from_source_chain}{ticker}{amount}{local_chain_id}{contract_address}{destination_address}
+    // cosmoshub-4TXHASHticker80000neutron-1neutron1contractneutron1destination
     let attestation = format!(
-        // source_chain_id, transaction_hash, ticker, amount
         "{}{}{}{}{}{}{}",
         source_chain_id,
         transaction_hash,
@@ -335,22 +361,14 @@ fn bridge_receive(
     // If ticker already exists, mint new tokens to the destination
     let coins_to_mint = coin(amount.u128(), tokenfactory_denom);
 
-    // TokenFactory can only mint to the admin for now
-    let mint_msg = MsgMint {
-        sender: env.contract.address.to_string(),
-        amount: Some(coins_to_mint.clone().into()),
-        mint_to_address: env.contract.address.to_string(),
-    };
-
-    // Once minted to self, transfer to destination
-    let mint_transfer = BankMsg::Send {
-        to_address: destination_addr.clone(),
-        amount: vec![coins_to_mint.clone()],
-    };
+    let mint_messages = build_mint_messages(
+        env.contract.address.to_string(),
+        coins_to_mint.clone(),
+        destination_addr.clone(),
+    );
 
     Ok(Response::default()
-        .add_message(mint_msg)
-        .add_message(mint_transfer)
+        .add_messages(mint_messages)
         .add_attribute("action", "bridge_receive")
         .add_attribute("tokens", coins_to_mint.to_string())
         .add_attribute("destination", destination_addr))
@@ -389,14 +407,16 @@ fn bridge_send(
         return Err(ContractError::InvalidFunds {});
     }
 
+    deps.api.debug(&format!(
+        "funds sent: {:?}",
+        info.funds.iter().collect::<Vec<_>>()
+    ));
+
     // Check the mapping for this token, fail if no mapping exists
     let cft20_denom = TOKEN_MAPPING.load(deps.storage, &bridging_coin.denom)?;
 
     // Check if the token is disabled
-    // We check the CFT-20 ticker and the TokenFactory in case one is missed in the disable
-    if DISABLED_TOKENS.has(deps.storage, &cft20_denom)
-        || DISABLED_TOKENS.has(deps.storage, &bridging_coin.denom)
-    {
+    if DISABLED_TOKENS.has(deps.storage, &cft20_denom) {
         return Err(ContractError::TokenDisabled {
             ticker: cft20_denom,
         });
@@ -450,7 +470,6 @@ fn bridge_send(
     let ibc_transfer = NeutronMsg::IbcTransfer {
         source_port: "transfer".to_string(),
         source_channel: config.bridge_ibc_channel,
-        // TODO: Note to auditor, please also confirm that this sender address can't be spoofed on the Hub's side
         sender: env.contract.address.to_string(),
         receiver: destination_addr.clone(),
         token: ibc_coin,
@@ -465,27 +484,30 @@ fn bridge_send(
             .time
             .plus_seconds(config.ibc_timeout_seconds)
             .nanos(),
-        memo,
-        fee,
+        memo: memo.clone(),
+        fee: fee.clone(),
     };
+
+    // Capture the inflight asset to track the bridging to be able to handle the
+    // IBC failures
+    let inflight = BridgingAsset {
+        sender: info.sender,
+        funds: bridging_coin.clone(),
+        fees: fee,
+    };
+    BRIDGE_CURRENT_PAYLOAD.save(deps.storage, &inflight)?;
+
+    // Set up the submessage to capture the channel and sequence for the IBC transfer
+    let ibc_transfer_submessage = SubMsg::reply_on_success(ibc_transfer, IBC_REPLY_HANDLER_ID);
 
     let response = Response::new()
         .add_message(burn_msg)
-        .add_message(ibc_transfer)
+        .add_submessage(ibc_transfer_submessage)
         .add_attribute("action", "bridge_send")
         .add_attribute("tokens", bridging_coin.to_string())
         .add_attribute("destination", destination_addr);
 
     Ok(response)
-}
-
-/// Retry a failed IBC transaction by using the chain's failure ID
-fn retry_send(failure_id: u64) -> Result<Response<NeutronMsg>, ContractError> {
-    let msg = NeutronMsg::submit_resubmit_failure(failure_id);
-    Ok(Response::default()
-        .add_message(msg)
-        .add_attribute("action", "bridge_retry_send")
-        .add_attribute("failure_id", failure_id.to_string()))
 }
 
 /// Add a signer to the list of allowed public keys
@@ -531,6 +553,21 @@ fn add_signer(
             reason: "The public key has already been loaded".to_string(),
         });
     }
+
+    // Check that the name isn't already in use
+    // Note that with an excessive amount of signers, this may run out of gas
+    SIGNERS
+        .range(deps.storage, None, None, cosmwasm_std::Order::Ascending)
+        .try_for_each(|item| {
+            if let Ok((_, signer_name)) = item {
+                if signer_name == name {
+                    return Err(ContractError::InvalidConfiguration {
+                        reason: format!("The name '{}' is already linked to a public key", name),
+                    });
+                }
+            }
+            Ok(())
+        })?;
 
     SIGNERS.save(deps.storage, &public_key, &name)?;
 
@@ -581,8 +618,6 @@ fn remove_signer(
 fn update_config(
     deps: DepsMut<NeutronQuery>,
     info: MessageInfo,
-    signer_threshold: Option<u8>,
-    bridge_chain_id: Option<String>,
     bridge_ibc_channel: Option<String>,
     ibc_timeout_seconds: Option<u64>,
 ) -> Result<Response<NeutronMsg>, ContractError> {
@@ -593,32 +628,6 @@ fn update_config(
         return Err(ContractError::Unauthorized {});
     }
 
-    // Signer threshold can't be less than 2. We require at _least_ 2 valid
-    // signatures before allowing the bridge to even be instantiated
-    if let Some(signer_threshold) = signer_threshold {
-        if signer_threshold < MIN_SIGNER_THRESHOLD {
-            return Err(ContractError::InvalidConfiguration {
-                reason: format!(
-                    "Invalid signer threshold, the minimum is {}",
-                    MIN_SIGNER_THRESHOLD
-                ),
-            });
-        }
-
-        config.signer_threshold = signer_threshold;
-    }
-
-    // Allow changing the source chain ID in case the source chain
-    // undergoes an upgrade that changes the chain ID
-    if let Some(bridge_chain_id) = bridge_chain_id {
-        if bridge_chain_id.is_empty() {
-            return Err(ContractError::InvalidConfiguration {
-                reason: "The source chain ID must be specified".to_string(),
-            });
-        }
-        config.bridge_chain_id = bridge_chain_id;
-    }
-
     // Allow changing the IBC channel in case the original channel expires
     // and can't be revived
     if let Some(bridge_ibc_channel) = bridge_ibc_channel {
@@ -627,6 +636,10 @@ fn update_config(
                 reason: "The bridge IBC channel must be specified".to_string(),
             });
         }
+
+        // Ensure the IBC channel exists with transfer port
+        validate_channel(deps.querier, &bridge_ibc_channel)?;
+
         config.bridge_ibc_channel = bridge_ibc_channel;
     }
 
@@ -661,5 +674,109 @@ fn min_ntrn_ibc_fee(fee: IbcFee) -> IbcFee {
             .into_iter()
             .filter(|a| a.denom == FEE_DENOM)
             .collect(),
+    }
+}
+
+#[cfg(test)]
+mod testing {
+
+    use super::*;
+
+    use cosmwasm_std::testing::{mock_env, mock_info};
+    use cosmwasm_std::{coins, CosmosMsg, SubMsg};
+
+    use crate::contract::instantiate;
+    use crate::mock::mock_neutron_dependencies;
+    use crate::msg::InstantiateMsg;
+
+    pub const OWNER: &str = "owner";
+    pub const NOT_OWNER: &str = "not_owner";
+    pub const USER: &str = "cosmos_user";
+
+    #[test]
+    fn test_bridge_send() {
+        let mut deps = mock_neutron_dependencies(&[]);
+        let env = mock_env();
+
+        let info = mock_info(OWNER, &[]);
+
+        instantiate(
+            deps.as_mut(),
+            env.clone(),
+            info.clone(),
+            InstantiateMsg {
+                owner: OWNER.to_string(),
+                bridge_chain_id: "localgaia-1".to_string(),
+                bridge_ibc_channel: "channel-0".to_string(),
+                ibc_timeout_seconds: 300,
+            },
+        )
+        .unwrap();
+
+        TOKEN_MAPPING
+            .save(
+                deps.as_mut().storage,
+                "TESTTOKEN",
+                &"factory/contract0/TESTTOKEN".to_string(),
+            )
+            .unwrap();
+
+        TOKEN_MAPPING
+            .save(
+                deps.as_mut().storage,
+                "factory/contract0/TESTTOKEN",
+                &"TESTTOKEN".to_string(),
+            )
+            .unwrap();
+
+        // Test with correct funds
+        let info = mock_info(
+            NOT_OWNER,
+            &[
+                Coin {
+                    denom: "factory/contract0/TESTTOKEN".to_string(),
+                    amount: Uint128::from(100u64),
+                },
+                Coin {
+                    denom: "untrn".to_string(),
+                    amount: Uint128::from(200_001u64),
+                },
+            ],
+        );
+        let response =
+            bridge_send(deps.as_mut(), mock_env(), info.clone(), USER.to_owned()).unwrap();
+
+        // Verify the tokens are burned
+        assert_eq!(
+            response.messages[0],
+            SubMsg::new(MsgBurn {
+                sender: env.contract.address.to_string(),
+                burn_from_address: env.contract.address.to_string(),
+                amount: Some(osmosis_std::types::cosmos::base::v1beta1::Coin {
+                    denom: "factory/contract0/TESTTOKEN".to_string(),
+                    amount: "100".to_string(),
+                }),
+            }),
+        );
+
+        // Verify the memo sent is correct
+        assert_eq!(response.messages[1].msg,CosmosMsg::Custom(NeutronMsg::IbcTransfer {
+                    source_port: "transfer".to_string(),
+                    source_channel: "channel-0".to_string(),
+                    sender: env.contract.address.to_string(),
+                    receiver: USER.to_string(),
+                    token: coin(1, "untrn"),
+                    timeout_height: RequestPacketTimeoutHeight {
+                        revision_number: None,
+                        revision_height: None,
+                    },
+                    timeout_timestamp: env.block.time.plus_seconds(300).nanos(),
+                    memo: "urn:bridge:localgaia-1@v1;recv$tic=TESTTOKEN,amt=100,dst=cosmos_user,rch=cosmos-testnet-14002,src=not_owner".to_string(),
+                    fee: IbcFee {
+                        recv_fee: vec![],
+                        ack_fee: coins(100_000, FEE_DENOM),
+                        timeout_fee: coins(100_000, FEE_DENOM),
+                    },
+                }))
     }
 }

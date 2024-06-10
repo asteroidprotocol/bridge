@@ -52,6 +52,9 @@ pub enum ContractError {
 
     #[error("Insufficient funds to cover the bridging cost, expected at least {expected} untrn")]
     InsufficientFunds { expected: Uint128 },
+
+    #[error("Failed to handle IBC transfer response: {detail}")]
+    IBCResponseFail { detail: String },
 }
 
 impl From<OverflowError> for ContractError {

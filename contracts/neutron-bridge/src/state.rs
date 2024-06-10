@@ -1,6 +1,6 @@
 use cw_storage_plus::{Item, Map};
 
-use crate::types::{Config, TokenMetadata};
+use crate::types::{BridgingAsset, Config, TokenMetadata};
 
 use astroport::common::OwnershipProposal;
 
@@ -28,3 +28,9 @@ pub const TOKEN_METADATA: Item<TokenMetadata> = Item::new("token_metadata");
 
 /// Contains a proposal to change contract ownership
 pub const OWNERSHIP_PROPOSAL: Item<OwnershipProposal> = Item::new("ownership_proposal");
+
+/// Holds the bridging assets that are currently in flight
+pub const BRIDGE_INFLIGHT: Map<(&str, u64), BridgingAsset> = Map::new("bridge_inflight");
+
+/// Temporary storage for the payload of the current bridge message for handling replies
+pub const BRIDGE_CURRENT_PAYLOAD: Item<BridgingAsset> = Item::new("bridge_current_payload");
