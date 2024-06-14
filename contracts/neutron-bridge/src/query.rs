@@ -1,4 +1,4 @@
-use crate::state::{CONFIG, DISABLED_TOKENS, TOKEN_MAPPING};
+use crate::state::{CONFIG, DISABLED_TOKENS, HANDLED_TRANSACTIONS, TOKEN_MAPPING};
 use crate::types::{QuerySignersResponse, QueryTokensResponse};
 use crate::{msg::QueryMsg, state::SIGNERS};
 use base64::{engine::general_purpose, Engine as _};
@@ -40,6 +40,9 @@ pub fn query(deps: Deps<NeutronQuery>, _env: Env, msg: QueryMsg) -> StdResult<Bi
         QueryMsg::DisabledTokens { start_after, limit } => {
             to_json_binary(&query_disabled_tokens(deps, start_after, limit)?)
         }
+        QueryMsg::IsTransactionProcessed { transaction_hash } => {
+            to_json_binary(&query_is_transaction_processed(deps, transaction_hash)?)
+        }
     }
 }
 
@@ -77,4 +80,12 @@ pub fn query_disabled_tokens(
         .collect::<StdResult<Vec<String>>>()?;
 
     Ok(QueryTokensResponse { tokens })
+}
+
+/// Queries if a transaction has been processed
+pub fn query_is_transaction_processed(
+    deps: Deps<NeutronQuery>,
+    transaction_hash: String,
+) -> StdResult<bool> {
+    Ok(HANDLED_TRANSACTIONS.has(deps.storage, &transaction_hash))
 }

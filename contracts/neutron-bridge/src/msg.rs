@@ -122,4 +122,7 @@ pub enum QueryMsg {
         start_after: Option<String>,
         limit: Option<u32>,
     },
+    /// Check if transaction has been processed
+    #[returns(bool)]
+    IsTransactionProcessed { transaction_hash: String },
 }
