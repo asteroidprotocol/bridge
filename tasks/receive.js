@@ -8,6 +8,7 @@ import {
   SOURCE_CHAIN_ID,
   DESTINATION_CHAIN_ID,
   TICKER,
+  ONLY_ONE_SIGNER,
 } from "./src/constants.js";
 
 const command = contractCommand();
@@ -30,7 +31,7 @@ contractTask(command, async (context, contract) => {
 
   const message = `${SOURCE_CHAIN_ID}${transactionHash}${TICKER}${amount}${DESTINATION_CHAIN_ID}${contract.address}${destinationAddress}`;
 
-  const signatures = await signMessage(message);
+  const signatures = await signMessage(message, ONLY_ONE_SIGNER);
 
   const res = await contract.execute({
     receive: {
