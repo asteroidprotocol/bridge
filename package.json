@@ -1,0 +1,6 @@
+{
+    "type": "module",
+    "dependencies": {
+        "@asteroid-protocol/lift": "^0.1.0"
+    }
+}
