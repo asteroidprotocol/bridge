@@ -4,5 +4,6 @@ artifacts
 node_modules
 
 .lift/state.local.json
+.lift/state.json
 
 /keys
